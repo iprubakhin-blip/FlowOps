@@ -1,7 +1,17 @@
 import { CommonModule } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { Priority, Status, Task } from './models/task';
+import { Subject } from 'rxjs';
+import { searchQuery$ } from './search-query';
+import {
+  PAGE_SIZES,
+  Priority,
+  Status,
+  Task,
+  TaskSortBy,
+  TaskSortOrder,
+} from './models/task';
 import { TasksService } from './services/tasks.service';
 
 @Component({
@@ -14,27 +24,22 @@ import { TasksService } from './services/tasks.service';
 export class AppComponent {
   readonly store = inject(TasksService);
   readonly search = signal('');
-  readonly statusFilter = signal('all');
-  readonly priorityFilter = signal('all');
   readonly showForm = signal(false);
+  readonly pageSizes = PAGE_SIZES;
+  private readonly searchInput = new Subject<string>();
 
   draftTitle = '';
   draftTeam = 'Frontend';
   draftPriority: Priority = 'medium';
 
-  readonly total = computed(() => this.store.tasks().length);
-  readonly inProgress = computed(() => this.store.tasks().filter((t) => t.status === 'in_progress').length);
-  readonly done = computed(() => this.store.tasks().filter((t) => t.status === 'done').length);
-  readonly highPriority = computed(() => this.store.tasks().filter((t) => t.priority === 'high' && t.status !== 'done').length);
-  readonly completionRate = computed(() => this.total() === 0 ? 0 : Math.round(this.done() / this.total() * 100));
-  readonly filteredTasks = computed(() => {
-    const query = this.search().trim().toLowerCase();
-    const status = this.statusFilter();
-    const priority = this.priorityFilter();
-    return this.store.tasks().filter((task) =>
-      (!query || `${task.title} ${task.team}`.toLowerCase().includes(query)) &&
-      (status === 'all' || task.status === status) &&
-      (priority === 'all' || task.priority === priority));
+  readonly matchingTotal = computed(() => this.store.pagination().total);
+  readonly pageItemCount = computed(() => this.store.tasks().length);
+  readonly currentPage = computed(() => this.store.pagination().page);
+  readonly totalPages = computed(() => this.store.pagination().totalPages);
+  readonly canPrev = computed(() => this.currentPage() > 1 && !this.store.loading());
+  readonly canNext = computed(() => {
+    const pages = this.totalPages();
+    return pages > 0 && this.currentPage() < pages && !this.store.loading();
   });
 
   readonly statuses: { id: Status; label: string }[] = [
@@ -43,10 +48,65 @@ export class AppComponent {
     { id: 'done', label: 'Done' },
   ];
 
-  constructor() { this.store.load(); }
+  readonly sortFields: { id: TaskSortBy; label: string }[] = [
+    { id: 'createdAt', label: 'Created' },
+    { id: 'updatedAt', label: 'Updated' },
+    { id: 'title', label: 'Title' },
+    { id: 'team', label: 'Team' },
+    { id: 'priority', label: 'Priority' },
+    { id: 'status', label: 'Status' },
+    { id: 'id', label: 'ID' },
+  ];
 
-  statusLabel(status: Status): string {
-    return this.statuses.find((entry) => entry.id === status)?.label ?? status;
+  constructor() {
+    searchQuery$(this.searchInput).pipe(takeUntilDestroyed()).subscribe((search) => {
+      this.store.patchQuery({ search });
+    });
+  }
+
+  onSearch(value: string): void {
+    this.search.set(value);
+    this.searchInput.next(value);
+  }
+
+  onStatusFilter(value: string): void {
+    const status = this.statuses.some((entry) => entry.id === value) ? value as Status : undefined;
+    this.store.patchQuery({ status });
+  }
+
+  onPriorityFilter(value: string): void {
+    const allowed: Priority[] = ['low', 'medium', 'high'];
+    const priority = allowed.includes(value as Priority) ? value as Priority : undefined;
+    this.store.patchQuery({ priority });
+  }
+
+  onSortBy(value: string): void {
+    const match = this.sortFields.find((field) => field.id === value);
+    if (match) this.store.patchQuery({ sortBy: match.id });
+  }
+
+  onSortOrder(value: string): void {
+    if (value === 'asc' || value === 'desc') {
+      this.store.patchQuery({ sortOrder: value });
+    }
+  }
+
+  onPageSize(value: string | number): void {
+    const limit = Number(value);
+    if (this.pageSizes.includes(limit as typeof PAGE_SIZES[number])) {
+      this.store.patchQuery({ limit });
+    }
+  }
+
+  sortIndicator(field: TaskSortBy): string {
+    if (this.store.query().sortBy !== field) return '';
+    return this.store.query().sortOrder === 'asc' ? ' ↑' : ' ↓';
+  }
+
+  toggleSort(field: TaskSortBy): void {
+    const query = this.store.query();
+    const sortOrder: TaskSortOrder = query.sortBy === field && query.sortOrder === 'desc' ? 'asc' : 'desc';
+    this.store.patchQuery({ sortBy: field, sortOrder });
   }
 
   changeStatus(task: Task, status: string): void {

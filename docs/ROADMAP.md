@@ -12,10 +12,11 @@
 ## v0.2 — Full-stack professionalism
 - [ ] Database migrations rather than auto-create at startup
 - [ ] Authentication and per-user task ownership
-- [ ] API integration tests with a test database
-- [ ] Angular component and service tests
-- [ ] Frontend loading/empty/error state improvements
-- [ ] Pagination and sorting on backend
+- [x] API integration tests with a test database (`flowops_test`)
+- [x] Angular service tests (paged API, search debounce, error/reload)
+- [x] Frontend loading/empty/error state improvements
+- [x] Pagination, filtering, search and sorting on backend (`GET /api/tasks`)
+- [x] Wire Angular list/KPIs to the paged tasks API
 - [ ] Accessible, confirmed task status changes
 - [ ] Production deployment with secrets and backups
 

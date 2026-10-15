@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isStatus, parseCreateTask } from './tasks';
+import { isPriority, isStatus, parseCreateTask } from './tasks';
 
 test('accepts a valid new task and trims its text fields', () => {
   assert.deepEqual(parseCreateTask({ title: '  Fix API errors  ', team: '  Platform ', priority: 'high' }), {
@@ -17,4 +17,9 @@ test('rejects missing fields and unsupported priorities', () => {
 test('recognizes only allowed task statuses', () => {
   assert.equal(isStatus('in_progress'), true);
   assert.equal(isStatus('archived'), false);
+});
+
+test('recognizes only allowed task priorities', () => {
+  assert.equal(isPriority('medium'), true);
+  assert.equal(isPriority('urgent'), false);
 });

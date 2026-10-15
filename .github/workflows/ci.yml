@@ -5,6 +5,20 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: flowops
+          POSTGRES_PASSWORD: flowops_dev_password
+          POSTGRES_DB: flowops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowops -d flowops"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -12,4 +26,7 @@ jobs:
           node-version: '22'
       - run: npm install
       - run: npm run test
+      - run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://flowops:flowops_dev_password@127.0.0.1:5432/flowops
       - run: npm run build

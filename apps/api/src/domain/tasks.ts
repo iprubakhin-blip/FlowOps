@@ -24,6 +24,10 @@ export function isStatus(value: unknown): value is TaskStatus {
   return typeof value === 'string' && STATUSES.some((status) => status === value);
 }
 
+export function isPriority(value: unknown): value is TaskPriority {
+  return typeof value === 'string' && PRIORITIES.some((priority) => priority === value);
+}
+
 export function parseCreateTask(input: unknown): NewTask {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     throw new Error('Body must be a JSON object.');
