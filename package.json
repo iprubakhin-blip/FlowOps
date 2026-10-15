@@ -1,0 +1,13 @@
+{
+  "name": "flowops-lite",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/api", "apps/web"],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace=@flowops/api",
+    "dev:web": "npm run start --workspace=@flowops/web",
+    "build": "npm run build --workspace=@flowops/api && npm run build --workspace=@flowops/web",
+    "test": "npm run test --workspace=@flowops/api"
+  },
+  "engines": {"node": ">=20.19.0"}
+}

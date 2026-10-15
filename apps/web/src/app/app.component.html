@@ -1,0 +1,52 @@
+<div class="shell">
+  <aside class="sidebar">
+    <div class="logo"><span class="logo-icon">F</span><span>flowops<span class="logo-dot">.</span></span></div>
+    <div class="workspace"><span class="workspace-avatar">O</span><div><strong>Operations</strong><small>Team workspace</small></div><span class="chevron">⌄</span></div>
+    <div class="side-label">WORKSPACE</div>
+    <nav aria-label="Main navigation">
+      <a class="nav-item active" href="#overview"><span class="nav-icon">▦</span> Overview</a>
+      <a class="nav-item" href="#tasks"><span class="nav-icon">☷</span> All tasks</a>
+    </nav>
+    <div class="sidebar-bottom"><div class="side-label">PORTFOLIO DEMO</div><p>A full-stack Angular + NestJS application with PostgreSQL.</p><span class="version">v0.1 · Open source</span></div>
+  </aside>
+
+  <main class="main" id="overview">
+    <header class="topbar"><div class="breadcrumbs">Workspace <span>/</span> <strong>Overview</strong></div><span class="demo-badge"><span class="online-dot"></span> Demo workspace</span></header>
+    <div class="content">
+      <div class="heading-row"><div><div class="eyebrow">TEAM OPERATIONS</div><h1>Work overview<span class="h1-dot">.</span></h1><p class="subtitle">Stay on top of your team's work, priorities and progress.</p></div><button class="primary-button" type="button" (click)="showForm.set(!showForm())"><span>＋</span> {{ showForm() ? 'Close form' : 'New task' }}</button></div>
+
+      <section class="stats-grid" aria-label="Task metrics">
+        <div class="stat-card"><div class="stat-top"><span>Total tasks</span><span class="stat-symbol purple">▦</span></div><strong>{{ total() }}</strong><div class="stat-bottom">Across all teams</div></div>
+        <div class="stat-card"><div class="stat-top"><span>In progress</span><span class="stat-symbol blue">◷</span></div><strong>{{ inProgress() }}</strong><div class="stat-bottom">Currently being worked on</div></div>
+        <div class="stat-card"><div class="stat-top"><span>High priority</span><span class="stat-symbol orange">!</span></div><strong>{{ highPriority() }}</strong><div class="stat-bottom">Open high-priority tasks</div></div>
+        <div class="stat-card"><div class="stat-top"><span>Completion</span><span class="stat-symbol green">✓</span></div><strong>{{ completionRate() }}<small>%</small></strong><div class="stat-bottom">{{ done() }} tasks completed</div></div>
+      </section>
+
+      @if (store.error()) { <div class="alert" role="alert">{{ store.error() }} <button type="button" (click)="store.load()">Retry</button></div> }
+
+      @if (showForm()) {
+        <section class="panel create-panel" aria-label="Create a task">
+          <div class="panel-heading"><h2>Create a new task</h2><p>Tasks are saved to PostgreSQL through the NestJS API.</p></div>
+          <form (ngSubmit)="saveTask()" #taskForm="ngForm">
+            <label class="form-field wide">Task title<input name="title" [(ngModel)]="draftTitle" required minlength="3" maxlength="120" placeholder="e.g. Build metrics endpoint" /></label>
+            <label class="form-field">Team<input name="team" [(ngModel)]="draftTeam" required minlength="2" maxlength="60" /></label>
+            <label class="form-field">Priority<select name="priority" [(ngModel)]="draftPriority"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+            <button class="primary-button submit-button" type="submit" [disabled]="!taskForm.valid || store.saving()">{{ store.saving() ? 'Saving…' : 'Create task' }}</button>
+          </form>
+        </section>
+      }
+
+      <section class="panel table-panel" id="tasks">
+        <div class="table-heading"><div><h2>All tasks</h2><p>Track, filter and manage work in one place</p></div><span class="task-counter">{{ filteredTasks().length }} tasks</span></div>
+        <div class="filters"><label class="search-label"><span>⌕</span><input type="search" placeholder="Search tasks or teams…" aria-label="Search tasks" [value]="search()" (input)="search.set($any($event.target).value)" /></label><select aria-label="Filter by status" [value]="statusFilter()" (change)="statusFilter.set($any($event.target).value)"><option value="all">All statuses</option><option value="todo">To do</option><option value="in_progress">In progress</option><option value="done">Done</option></select><select aria-label="Filter by priority" [value]="priorityFilter()" (change)="priorityFilter.set($any($event.target).value)"><option value="all">All priorities</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+        <div class="table-scroll"><table><thead><tr><th>Task</th><th>Team</th><th>Priority</th><th>Status</th><th>Created</th></tr></thead><tbody>
+          @for (task of filteredTasks(); track task.id) {
+            <tr><td><div class="task-title"><span class="task-checkbox" [class.checked]="task.status === 'done'">{{ task.status === 'done' ? '✓' : '' }}</span><span>{{ task.title }}</span></div><small class="task-id">OPS-{{ task.id }}</small></td><td><span class="team-avatar">{{ task.team.charAt(0).toUpperCase() }}</span> {{ task.team }}</td><td><span class="priority" [class.high]="task.priority === 'high'" [class.medium]="task.priority === 'medium'" [class.low]="task.priority === 'low'"><span class="priority-dot"></span>{{ task.priority | titlecase }}</span></td><td><select class="status-select" [class.status-done]="task.status === 'done'" [class.status-progress]="task.status === 'in_progress'" [value]="task.status" [attr.aria-label]="'Status for ' + task.title" (change)="changeStatus(task, $any($event.target).value)">@for (status of statuses; track status.id) { <option [value]="status.id">{{ status.label }}</option> }</select></td><td class="date-cell">{{ task.createdAt | date:'MMM d, y' }}</td></tr>
+          } @empty { <tr><td colspan="5" class="empty-state">{{ store.loading() ? 'Loading tasks…' : 'No tasks match these filters.' }}</td></tr> }
+        </tbody></table></div>
+        <div class="table-footer">Showing {{ filteredTasks().length }} of {{ total() }} tasks <span>FlowOps Lite · Portfolio project</span></div>
+      </section>
+      <footer class="page-footer">Built with Angular, NestJS and PostgreSQL · Demo data only</footer>
+    </div>
+  </main>
+</div>
