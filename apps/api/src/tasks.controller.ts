@@ -1,7 +1,8 @@
 import {
   BadRequestException, Body, Controller, Get, NotFoundException,
-  Param, ParseIntPipe, Patch, Post,
+  Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
+import { PaginatedTasks, parseListQuery } from './domain/task-query';
 import { isStatus, parseCreateTask, Task, TaskStatus } from './domain/tasks';
 import { TasksRepository } from './tasks.repository';
 
@@ -10,8 +11,12 @@ export class TasksController {
   constructor(private readonly tasks: TasksRepository) {}
 
   @Get()
-  list(): Promise<Task[]> {
-    return this.tasks.findAll();
+  async list(@Query() query: Record<string, unknown>): Promise<PaginatedTasks> {
+    try {
+      return await this.tasks.findPage(parseListQuery(query));
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : 'Invalid query.');
+    }
   }
 
   @Post()

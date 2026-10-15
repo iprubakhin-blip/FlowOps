@@ -16,13 +16,13 @@
       <div class="heading-row"><div><div class="eyebrow">TEAM OPERATIONS</div><h1>Work overview<span class="h1-dot">.</span></h1><p class="subtitle">Stay on top of your team's work, priorities and progress.</p></div><button class="primary-button" type="button" (click)="showForm.set(!showForm())"><span>＋</span> {{ showForm() ? 'Close form' : 'New task' }}</button></div>
 
       <section class="stats-grid" aria-label="Task metrics">
-        <div class="stat-card"><div class="stat-top"><span>Total tasks</span><span class="stat-symbol purple">▦</span></div><strong>{{ total() }}</strong><div class="stat-bottom">Across all teams</div></div>
-        <div class="stat-card"><div class="stat-top"><span>In progress</span><span class="stat-symbol blue">◷</span></div><strong>{{ inProgress() }}</strong><div class="stat-bottom">Currently being worked on</div></div>
-        <div class="stat-card"><div class="stat-top"><span>High priority</span><span class="stat-symbol orange">!</span></div><strong>{{ highPriority() }}</strong><div class="stat-bottom">Open high-priority tasks</div></div>
-        <div class="stat-card"><div class="stat-top"><span>Completion</span><span class="stat-symbol green">✓</span></div><strong>{{ completionRate() }}<small>%</small></strong><div class="stat-bottom">{{ done() }} tasks completed</div></div>
+        <div class="stat-card"><div class="stat-top"><span>Matching tasks</span><span class="stat-symbol purple">▦</span></div><strong>{{ matchingTotal() }}</strong><div class="stat-bottom">Server total for current filters</div></div>
+        <div class="stat-card"><div class="stat-top"><span>This page</span><span class="stat-symbol blue">☷</span></div><strong>{{ pageItemCount() }}</strong><div class="stat-bottom">Rows loaded from the API</div></div>
+        <div class="stat-card"><div class="stat-top"><span>Page</span><span class="stat-symbol orange">#</span></div><strong>{{ currentPage() }}<small>/{{ totalPages() }}</small></strong><div class="stat-bottom">Current page of matching tasks</div></div>
+        <div class="stat-card"><div class="stat-top"><span>Page size</span><span class="stat-symbol green">☰</span></div><strong>{{ store.query().limit }}</strong><div class="stat-bottom">Maximum {{ pageSizes[pageSizes.length - 1] }} rows per request</div></div>
       </section>
 
-      @if (store.error()) { <div class="alert" role="alert">{{ store.error() }} <button type="button" (click)="store.load()">Retry</button></div> }
+      @if (store.error()) { <div class="alert" role="alert">{{ store.error() }} <button type="button" (click)="store.reload()">Retry</button></div> }
 
       @if (showForm()) {
         <section class="panel create-panel" aria-label="Create a task">
@@ -37,14 +37,81 @@
       }
 
       <section class="panel table-panel" id="tasks">
-        <div class="table-heading"><div><h2>All tasks</h2><p>Track, filter and manage work in one place</p></div><span class="task-counter">{{ filteredTasks().length }} tasks</span></div>
-        <div class="filters"><label class="search-label"><span>⌕</span><input type="search" placeholder="Search tasks or teams…" aria-label="Search tasks" [value]="search()" (input)="search.set($any($event.target).value)" /></label><select aria-label="Filter by status" [value]="statusFilter()" (change)="statusFilter.set($any($event.target).value)"><option value="all">All statuses</option><option value="todo">To do</option><option value="in_progress">In progress</option><option value="done">Done</option></select><select aria-label="Filter by priority" [value]="priorityFilter()" (change)="priorityFilter.set($any($event.target).value)"><option value="all">All priorities</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
-        <div class="table-scroll"><table><thead><tr><th>Task</th><th>Team</th><th>Priority</th><th>Status</th><th>Created</th></tr></thead><tbody>
-          @for (task of filteredTasks(); track task.id) {
-            <tr><td><div class="task-title"><span class="task-checkbox" [class.checked]="task.status === 'done'">{{ task.status === 'done' ? '✓' : '' }}</span><span>{{ task.title }}</span></div><small class="task-id">OPS-{{ task.id }}</small></td><td><span class="team-avatar">{{ task.team.charAt(0).toUpperCase() }}</span> {{ task.team }}</td><td><span class="priority" [class.high]="task.priority === 'high'" [class.medium]="task.priority === 'medium'" [class.low]="task.priority === 'low'"><span class="priority-dot"></span>{{ task.priority | titlecase }}</span></td><td><select class="status-select" [class.status-done]="task.status === 'done'" [class.status-progress]="task.status === 'in_progress'" [value]="task.status" [attr.aria-label]="'Status for ' + task.title" (change)="changeStatus(task, $any($event.target).value)">@for (status of statuses; track status.id) { <option [value]="status.id">{{ status.label }}</option> }</select></td><td class="date-cell">{{ task.createdAt | date:'MMM d, y' }}</td></tr>
-          } @empty { <tr><td colspan="5" class="empty-state">{{ store.loading() ? 'Loading tasks…' : 'No tasks match these filters.' }}</td></tr> }
-        </tbody></table></div>
-        <div class="table-footer">Showing {{ filteredTasks().length }} of {{ total() }} tasks <span>FlowOps Lite · Portfolio project</span></div>
+        <div class="table-heading"><div><h2>All tasks</h2><p>Server-side search, filters, sort and pagination</p></div><span class="task-counter">{{ matchingTotal() }} matching</span></div>
+        <div class="filters">
+          <label class="search-label"><span>⌕</span><input type="search" maxlength="120" placeholder="Search title or team…" aria-label="Search tasks" [value]="search()" (input)="onSearch($any($event.target).value)" /></label>
+          <select aria-label="Filter by status" [value]="store.query().status ?? 'all'" (change)="onStatusFilter($any($event.target).value)">
+            <option value="all">All statuses</option>
+            <option value="todo">To do</option>
+            <option value="in_progress">In progress</option>
+            <option value="done">Done</option>
+          </select>
+          <select aria-label="Filter by priority" [value]="store.query().priority ?? 'all'" (change)="onPriorityFilter($any($event.target).value)">
+            <option value="all">All priorities</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+          <select aria-label="Sort by" [value]="store.query().sortBy" (change)="onSortBy($any($event.target).value)">
+            @for (field of sortFields; track field.id) { <option [value]="field.id">{{ field.label }}</option> }
+          </select>
+          <select aria-label="Sort order" [value]="store.query().sortOrder" (change)="onSortOrder($any($event.target).value)">
+            <option value="desc">Descending</option>
+            <option value="asc">Ascending</option>
+          </select>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th><button type="button" class="sort-button" (click)="toggleSort('title')">Task{{ sortIndicator('title') }}</button></th>
+                <th><button type="button" class="sort-button" (click)="toggleSort('team')">Team{{ sortIndicator('team') }}</button></th>
+                <th><button type="button" class="sort-button" (click)="toggleSort('priority')">Priority{{ sortIndicator('priority') }}</button></th>
+                <th><button type="button" class="sort-button" (click)="toggleSort('status')">Status{{ sortIndicator('status') }}</button></th>
+                <th><button type="button" class="sort-button" (click)="toggleSort('createdAt')">Created{{ sortIndicator('createdAt') }}</button></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (task of store.tasks(); track task.id) {
+                <tr>
+                  <td>
+                    <div class="task-title"><span class="task-checkbox" [class.checked]="task.status === 'done'">{{ task.status === 'done' ? '✓' : '' }}</span><span>{{ task.title }}</span></div>
+                    <small class="task-id">OPS-{{ task.id }}</small>
+                  </td>
+                  <td><span class="team-avatar">{{ task.team.charAt(0).toUpperCase() }}</span> {{ task.team }}</td>
+                  <td><span class="priority" [class.high]="task.priority === 'high'" [class.medium]="task.priority === 'medium'" [class.low]="task.priority === 'low'"><span class="priority-dot"></span>{{ task.priority | titlecase }}</span></td>
+                  <td>
+                    <select class="status-select" [class.status-done]="task.status === 'done'" [class.status-progress]="task.status === 'in_progress'" [attr.aria-label]="'Status for ' + task.title" [ngModel]="task.status" [ngModelOptions]="{standalone: true}" (ngModelChange)="changeStatus(task, $event)">
+                      @for (status of statuses; track status.id) { <option [value]="status.id">{{ status.label }}</option> }
+                    </select>
+                  </td>
+                  <td class="date-cell">{{ task.createdAt | date:'MMM d, y' }}</td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="5" class="empty-state">
+                    @if (store.loading()) { Loading tasks… }
+                    @else if (store.error()) { Could not load tasks. <button type="button" class="inline-retry" (click)="store.reload()">Retry</button> }
+                    @else { No tasks match these filters. }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="table-footer">
+          <span>{{ store.loading() ? 'Loading…' : 'Showing ' + pageItemCount() + ' of ' + matchingTotal() + ' matching tasks' }}</span>
+          <div class="pager">
+            <label class="page-size">Rows
+              <select aria-label="Rows per page" [ngModel]="store.query().limit" [ngModelOptions]="{standalone: true}" (ngModelChange)="onPageSize($event)">
+                @for (size of pageSizes; track size) { <option [ngValue]="size">{{ size }}</option> }
+              </select>
+            </label>
+            <button type="button" [disabled]="!canPrev()" (click)="store.setPage(currentPage() - 1)">Previous</button>
+            <span class="page-status">Page {{ currentPage() }} of {{ totalPages() || 1 }}</span>
+            <button type="button" [disabled]="!canNext()" (click)="store.setPage(currentPage() + 1)">Next</button>
+          </div>
+        </div>
       </section>
       <footer class="page-footer">Built with Angular, NestJS and PostgreSQL · Demo data only</footer>
     </div>

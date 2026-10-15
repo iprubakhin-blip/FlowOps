@@ -1,6 +1,16 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Pool } from 'pg';
+import {
+  buildTaskListSql,
+  PaginatedTasks,
+  paginationMeta,
+  TaskListQuery,
+} from './domain/task-query';
 import { NewTask, Task, TaskStatus } from './domain/tasks';
+
+function isTestDatabase(): boolean {
+  return (process.env.DATABASE_URL ?? '').includes('flowops_test');
+}
 
 const TASK_COLUMNS = `
   id, title, team, priority, status,
@@ -27,7 +37,7 @@ export class TasksRepository implements OnModuleInit, OnModuleDestroy {
       )
     `);
     const existing = await this.pool.query<{ count: string }>('SELECT COUNT(*) AS count FROM tasks');
-    if (Number(existing.rows[0]?.count) === 0) {
+    if (!isTestDatabase() && Number(existing.rows[0]?.count) === 0) {
       const examples: NewTask[] = [
         { title: 'Review API gateway error logs', team: 'Platform', priority: 'high' },
         { title: 'Refactor customer onboarding form', team: 'Frontend', priority: 'medium' },
@@ -45,9 +55,18 @@ export class TasksRepository implements OnModuleInit, OnModuleDestroy {
     await this.pool.end();
   }
 
-  async findAll(): Promise<Task[]> {
-    const result = await this.pool.query<Task>(`SELECT ${TASK_COLUMNS} FROM tasks ORDER BY created_at DESC, id DESC`);
-    return result.rows;
+  async findPage(query: TaskListQuery): Promise<PaginatedTasks> {
+    const { whereSql, params, orderSql, limit, offset } = buildTaskListSql(query);
+    const count = await this.pool.query<{ total: number }>(
+      `SELECT COUNT(*)::int AS total FROM tasks ${whereSql}`,
+      params,
+    );
+    const total = Number(count.rows[0]?.total ?? 0);
+    const result = await this.pool.query<Task>(
+      `SELECT ${TASK_COLUMNS} FROM tasks ${whereSql} ORDER BY ${orderSql} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset],
+    );
+    return { items: result.rows, pagination: paginationMeta(total, query.page, query.limit) };
   }
 
   async create(payload: NewTask): Promise<Task> {
