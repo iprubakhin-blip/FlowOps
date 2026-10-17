@@ -1,0 +1,13 @@
+export const ACCESS_COOKIE = 'flowops_at';
+export const REFRESH_COOKIE = 'flowops_rt';
+export const CSRF_HEADER = 'x-requested-with';
+export const CSRF_HEADER_VALUE = 'FlowOpsWeb';
+export const JWT_ISSUER = 'flowops';
+export const JWT_AUDIENCE = 'flowops-web';
+export const ACCESS_TTL_SECONDS = 15 * 60;
+export const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const MIN_JWT_SECRET_LENGTH = 32;
+export const GENERIC_LOGIN_ERROR = 'Invalid email or password.';
+export const DEFAULT_WEB_ORIGIN = 'http://127.0.0.1:4300';
+export const LOGIN_THROTTLE = { limit: 5, ttl: 60_000 } as const;
+export const REFRESH_THROTTLE = { limit: 20, ttl: 60_000 } as const;

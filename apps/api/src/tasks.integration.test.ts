@@ -8,6 +8,7 @@ import { PaginatedTasks } from './domain/task-query';
 import { Task } from './domain/tasks';
 import { TasksController } from './tasks.controller';
 import { TasksRepository } from './tasks.repository';
+import { configureApp } from './configure-app';
 import { ensureIsolatedTestDatabase } from './testing/test-database';
 
 // tsx/esbuild does not emit design:paramtypes; Nest constructor injection needs it.
@@ -43,7 +44,7 @@ before(async () => {
   process.env.DATABASE_URL = testUrl;
   const { AppModule } = await import('./app.module');
   app = await NestFactory.create(AppModule, { logger: false });
-  app.setGlobalPrefix('api');
+  configureApp(app);
   await app.listen(0, '127.0.0.1');
   baseUrl = await app.getUrl();
   pool = new Pool({ connectionString: testUrl });

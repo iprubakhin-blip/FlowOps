@@ -10,8 +10,9 @@
 - [ ] Capture screenshots from a running instance
 
 ## v0.2 — Full-stack professionalism
-- [ ] Database migrations rather than auto-create at startup
+- [x] Database migrations rather than auto-create at startup
 - [ ] Authentication and per-user task ownership
+- [x] Backend session authentication (cookies, refresh rotation, CSRF, rate limits)
 - [x] API integration tests with a test database (`flowops_test`)
 - [x] Angular service tests (paged API, search debounce, error/reload)
 - [x] Frontend loading/empty/error state improvements

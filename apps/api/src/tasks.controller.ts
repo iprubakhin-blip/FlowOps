@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import {
   BadRequestException, Body, Controller, Get, NotFoundException,
   Param, ParseIntPipe, Patch, Post, Query,
@@ -39,3 +40,5 @@ export class TasksController {
     return updated;
   }
 }
+
+Reflect.defineMetadata('design:paramtypes', [TasksRepository], TasksController);
