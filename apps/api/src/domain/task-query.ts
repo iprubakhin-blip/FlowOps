@@ -1,3 +1,4 @@
+import { ValidationError } from '../http/validation-error';
 import {
   isPriority,
   isStatus,
@@ -78,7 +79,7 @@ function isSortOrder(value: unknown): value is TaskSortOrder {
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   if (typeof value !== 'string') {
-    throw new Error(`${name} must be a string.`);
+    throw new ValidationError(`${name} must be a string.`);
   }
   return value;
 }
@@ -86,11 +87,11 @@ function optionalString(value: unknown, name: string): string | undefined {
 function parsePositiveInt(value: unknown, name: string, fallback: number): number {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value !== 'string' && typeof value !== 'number') {
-    throw new Error(`${name} must be a positive integer.`);
+    throw new ValidationError(`${name} must be a positive integer.`);
   }
   const raw = String(value);
   if (!/^[1-9]\d*$/.test(raw)) {
-    throw new Error(`${name} must be a positive integer.`);
+    throw new ValidationError(`${name} must be a positive integer.`);
   }
   return Number(raw);
 }
@@ -105,45 +106,45 @@ export function parseListQuery(input: unknown): TaskListQuery {
     };
   }
   if (typeof input !== 'object' || Array.isArray(input)) {
-    throw new Error('Query must be an object.');
+    throw new ValidationError('Query must be an object.');
   }
   const raw = input as Record<string, unknown>;
   for (const value of Object.values(raw)) {
     if (Array.isArray(value)) {
-      throw new Error('Repeated query parameters are not allowed.');
+      throw new ValidationError('Repeated query parameters are not allowed.');
     }
   }
 
   const page = parsePositiveInt(raw.page, 'page', DEFAULT_PAGE);
   const limit = parsePositiveInt(raw.limit, 'limit', DEFAULT_LIMIT);
   if (limit > MAX_LIMIT) {
-    throw new Error(`limit must be at most ${MAX_LIMIT}.`);
+    throw new ValidationError(`limit must be at most ${MAX_LIMIT}.`);
   }
 
   const statusRaw = optionalString(raw.status, 'status');
   if (statusRaw !== undefined && !isStatus(statusRaw)) {
-    throw new Error('status must be todo, in_progress or done.');
+    throw new ValidationError('status must be todo, in_progress or done.');
   }
 
   const priorityRaw = optionalString(raw.priority, 'priority');
   if (priorityRaw !== undefined && !isPriority(priorityRaw)) {
-    throw new Error('priority must be low, medium or high.');
+    throw new ValidationError('priority must be low, medium or high.');
   }
 
   const searchRaw = optionalString(raw.search, 'search');
   const search = searchRaw?.trim();
   if (search !== undefined && search.length > MAX_SEARCH_LENGTH) {
-    throw new Error(`search must be at most ${MAX_SEARCH_LENGTH} characters.`);
+    throw new ValidationError(`search must be at most ${MAX_SEARCH_LENGTH} characters.`);
   }
 
   const sortByRaw = optionalString(raw.sortBy, 'sortBy');
   if (sortByRaw !== undefined && !isSortBy(sortByRaw)) {
-    throw new Error(`sortBy must be one of: ${SORT_FIELDS.join(', ')}.`);
+    throw new ValidationError(`sortBy must be one of: ${SORT_FIELDS.join(', ')}.`);
   }
 
   const sortOrderRaw = optionalString(raw.sortOrder, 'sortOrder');
   if (sortOrderRaw !== undefined && !isSortOrder(sortOrderRaw)) {
-    throw new Error('sortOrder must be asc or desc.');
+    throw new ValidationError('sortOrder must be asc or desc.');
   }
 
   return {
@@ -169,10 +170,14 @@ export interface TaskListSql {
   offset: number;
 }
 
-export function buildTaskListSql(query: TaskListQuery): TaskListSql {
+export function buildTaskListSql(query: TaskListQuery, ownerId?: number): TaskListSql {
   const conditions: string[] = [];
   const params: unknown[] = [];
 
+  if (ownerId !== undefined) {
+    params.push(ownerId);
+    conditions.push(`owner_id = $${params.length}`);
+  }
   if (query.status) {
     params.push(query.status);
     conditions.push(`status = $${params.length}`);

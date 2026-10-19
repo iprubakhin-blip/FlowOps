@@ -1,11 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { SignJWT, jwtVerify, errors as joseErrors } from 'jose';
-import {
-  ACCESS_TTL_SECONDS,
-  JWT_AUDIENCE,
-  JWT_ISSUER,
-} from './auth.constants';
-import { jwtSecretBytes } from './auth.config';
+import { JWT_AUDIENCE, JWT_ISSUER } from './auth.constants';
+import { accessTtlSeconds, jwtSecretBytes } from './auth.config';
 import { UserRole } from './auth.types';
 
 export interface AccessClaims {
@@ -28,7 +24,7 @@ export async function signAccessToken(userId: number, role: UserRole): Promise<s
     .setSubject(String(userId))
     .setJti(randomUUID())
     .setIssuedAt()
-    .setExpirationTime(`${ACCESS_TTL_SECONDS}s`)
+    .setExpirationTime(`${accessTtlSeconds()}s`)
     .setIssuer(JWT_ISSUER)
     .setAudience(JWT_AUDIENCE)
     .sign(jwtSecretBytes());

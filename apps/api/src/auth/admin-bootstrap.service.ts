@@ -2,19 +2,15 @@ import 'reflect-metadata';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { bootstrapAdminIfConfigured } from './bootstrap';
-import { UsersRepository } from './users.repository';
 
 @Injectable()
 export class AdminBootstrapService implements OnModuleInit {
-  constructor(
-    private readonly database: DatabaseService,
-    private readonly users: UsersRepository,
-  ) {}
+  constructor(private readonly database: DatabaseService) {}
 
   async onModuleInit(): Promise<void> {
     await this.database.ensureSchema();
-    await bootstrapAdminIfConfigured(this.users);
+    await bootstrapAdminIfConfigured(this.database.pool);
   }
 }
 
-Reflect.defineMetadata('design:paramtypes', [DatabaseService, UsersRepository], AdminBootstrapService);
+Reflect.defineMetadata('design:paramtypes', [DatabaseService], AdminBootstrapService);

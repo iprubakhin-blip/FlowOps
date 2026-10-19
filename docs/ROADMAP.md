@@ -11,8 +11,12 @@
 
 ## v0.2 — Full-stack professionalism
 - [x] Database migrations rather than auto-create at startup
-- [ ] Authentication and per-user task ownership
 - [x] Backend session authentication (cookies, refresh rotation, CSRF, rate limits)
+- [x] Angular login, session restore, cookie interceptor
+- [x] Backend task authorization and `owner_id` (M2.2-A)
+- [x] Angular dashboard guard, CSRF on task writes, role-aware copy (M2.2-B)
+- [x] M2.3 security QA: targeted hardening (refresh Web Locks, `Cache-Control: no-store`, extra negative tests). Cross-tab without Web Locks and MEMBER browser still documented limitations.
+- [x] M2.3-F: production cookie fail-closed boot, isolated MEMBER/browser QA harness (`flowops_test_m23f`, localhost:4310). GitHub CI on the feature branch remains a push-time check.
 - [x] API integration tests with a test database (`flowops_test`)
 - [x] Angular service tests (paged API, search debounce, error/reload)
 - [x] Frontend loading/empty/error state improvements

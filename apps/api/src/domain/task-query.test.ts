@@ -80,6 +80,17 @@ test('ignores untrusted sort identifiers by requiring a parsed query', () => {
   assert.deepEqual(sql.params, []);
 });
 
+test('scopes list SQL by owner_id without reading owner from the query object', () => {
+  const parsed = parseListQuery({ status: 'todo', ownerId: '999', owner_id: '999' });
+  assert.equal('ownerId' in parsed, false);
+  const sql = buildTaskListSql(parsed, 7);
+  assert.equal(sql.whereSql, 'WHERE owner_id = $1 AND status = $2');
+  assert.deepEqual(sql.params, [7, 'todo']);
+  const unscoped = buildTaskListSql(parsed);
+  assert.equal(unscoped.whereSql, 'WHERE status = $1');
+  assert.deepEqual(unscoped.params, ['todo']);
+});
+
 test('computes pagination metadata including empty results', () => {
   assert.deepEqual(paginationMeta(47, 2, 20), { page: 2, limit: 20, total: 47, totalPages: 3 });
   assert.deepEqual(paginationMeta(0, 1, 20), { page: 1, limit: 20, total: 0, totalPages: 0 });

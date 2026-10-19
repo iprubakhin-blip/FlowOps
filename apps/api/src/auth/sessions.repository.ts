@@ -11,6 +11,13 @@ export type RotateResult =
   | { status: 'invalid' }
   | { status: 'reuse'; familyId: string };
 
+/** Namespace for transaction-scoped per-family advisory locks. Distinct from MIGRATION_LOCK_KEY. */
+export const REFRESH_FAMILY_LOCK_NS = 0xF10607;
+
+export async function lockRefreshFamily(client: PoolClient, familyId: string): Promise<void> {
+  await client.query('SELECT pg_advisory_xact_lock($1, hashtext($2::text))', [REFRESH_FAMILY_LOCK_NS, familyId]);
+}
+
 @Injectable()
 export class SessionsRepository {
   constructor(private readonly database: DatabaseService) {}
@@ -30,14 +37,23 @@ export class SessionsRepository {
     try {
       await client.query('BEGIN');
       const hash = hashRefreshToken(presentedToken);
+      const family = await client.query<{ familyId: string }>(
+        `SELECT family_id AS "familyId" FROM refresh_sessions WHERE token_hash = $1`,
+        [hash],
+      );
+      if (!family.rows[0]) {
+        await client.query('ROLLBACK');
+        return { status: 'invalid' };
+      }
+      await lockRefreshFamily(client, family.rows[0].familyId);
       const found = await client.query<SessionRow>(
         `SELECT id, user_id AS "userId", family_id AS "familyId",
                 expires_at AS "expiresAt", replaced_at AS "replacedAt", revoked_at AS "revokedAt"
-         FROM refresh_sessions WHERE token_hash = $1 FOR UPDATE`,
+         FROM refresh_sessions WHERE token_hash = $1`,
         [hash],
       );
       const row = found.rows[0];
-      if (!row) {
+      if (!row || row.familyId !== family.rows[0].familyId) {
         await client.query('ROLLBACK');
         return { status: 'invalid' };
       }
@@ -76,11 +92,20 @@ export class SessionsRepository {
     try {
       await client.query('BEGIN');
       const found = await client.query<{ familyId: string }>(
-        `SELECT family_id AS "familyId" FROM refresh_sessions WHERE token_hash = $1 FOR UPDATE`,
+        `SELECT family_id AS "familyId" FROM refresh_sessions WHERE token_hash = $1`,
         [hashRefreshToken(presentedToken)],
       );
-      if (found.rows[0]) {
-        await revokeFamily(client, found.rows[0].familyId);
+      if (!found.rows[0]) {
+        await client.query('COMMIT');
+        return;
+      }
+      await lockRefreshFamily(client, found.rows[0].familyId);
+      const confirmed = await client.query<{ familyId: string }>(
+        `SELECT family_id AS "familyId" FROM refresh_sessions WHERE token_hash = $1`,
+        [hashRefreshToken(presentedToken)],
+      );
+      if (confirmed.rows[0]?.familyId === found.rows[0].familyId) {
+        await revokeFamily(client, confirmed.rows[0].familyId);
       }
       await client.query('COMMIT');
     } catch (error) {

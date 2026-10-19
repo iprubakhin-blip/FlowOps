@@ -2,9 +2,11 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Pool, PoolClient } from 'pg';
+import { bootstrapAdminIfConfigured } from '../auth/bootstrap';
 
 export const MIGRATION_LOCK_KEY = 0xF10605;
 export const BASELINE_VERSION = '001';
+export const OWNERSHIP_VERSION = '004';
 
 const FILE_NAME = /^(\d{3})_([a-z0-9_]+)\.sql$/;
 
@@ -57,8 +59,22 @@ export function loadMigrationFiles(directory = resolveMigrationsDirectory()): Mi
   });
 }
 
+export function normalizeSqlNewlines(sql: string): string {
+  return sql.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
 export function checksumSql(sql: string): string {
-  return createHash('sha256').update(sql, 'utf8').digest('hex');
+  return sha256Utf8(normalizeSqlNewlines(sql));
+}
+
+export function migrationChecksumMatches(recorded: string, sql: string): boolean {
+  const lf = normalizeSqlNewlines(sql);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  return new Set([checksumSql(sql), sha256Utf8(sql), sha256Utf8(lf), sha256Utf8(crlf)]).has(recorded);
+}
+
+function sha256Utf8(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
 export async function runMigrations(
@@ -82,7 +98,7 @@ export async function runMigrations(
       for (const migration of migrations) {
         const existing = applied.get(migration.version);
         if (existing) {
-          if (existing.checksum !== migration.checksum) {
+          if (!migrationChecksumMatches(existing.checksum, migration.sql)) {
             throw new Error(
               `Migration ${migration.fileName} checksum mismatch. ` +
                 `The SQL file changed after it was applied. Refusing to continue.`,
@@ -125,6 +141,9 @@ async function applyMigration(client: PoolClient, migration: MigrationFile): Pro
   try {
     if (migration.version === BASELINE_VERSION) {
       await applyBaseline(client, migration);
+    } else if (migration.version === OWNERSHIP_VERSION) {
+      await bootstrapAdminIfConfigured(client);
+      await applyTaskOwnership(client, migration);
     } else {
       await client.query(migration.sql);
     }
@@ -138,6 +157,68 @@ async function applyMigration(client: PoolClient, migration: MigrationFile): Pro
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Migration ${migration.fileName} failed: ${detail}`);
   }
+}
+
+async function applyTaskOwnership(client: PoolClient, migration: MigrationFile): Promise<void> {
+  await client.query(migration.sql);
+  const unowned = await client.query<{ count: string }>(
+    'SELECT COUNT(*) AS count FROM tasks WHERE owner_id IS NULL',
+  );
+  const unownedCount = Number(unowned.rows[0]?.count ?? 0);
+  if (unownedCount > 0) {
+    const ownerId = await resolveLegacyTaskOwner(client);
+    await client.query('UPDATE tasks SET owner_id = $1 WHERE owner_id IS NULL', [ownerId]);
+  }
+  const remaining = await client.query<{ count: string }>(
+    'SELECT COUNT(*) AS count FROM tasks WHERE owner_id IS NULL',
+  );
+  if (Number(remaining.rows[0]?.count ?? 0) > 0) {
+    throw new Error('Task ownership backfill left ownerless rows. Refusing NOT NULL.');
+  }
+  await client.query('ALTER TABLE tasks ALTER COLUMN owner_id SET NOT NULL');
+}
+
+async function resolveLegacyTaskOwner(client: PoolClient): Promise<number> {
+  const configured = process.env.TASK_LEGACY_OWNER_EMAIL?.trim();
+  if (configured) {
+    const user = await client.query<{ id: number; role: string }>(
+      `SELECT id, role FROM users WHERE LOWER(email) = LOWER($1)`,
+      [configured],
+    );
+    const row = user.rows[0];
+    if (!row) {
+      throw new Error(
+        `Legacy tasks exist, but TASK_LEGACY_OWNER_EMAIL (${configured}) does not match an existing user. ` +
+          'Point it at an existing ADMIN. Refusing to create an admin or assign an arbitrary user.',
+      );
+    }
+    if (row.role !== 'ADMIN') {
+      throw new Error(
+        `TASK_LEGACY_OWNER_EMAIL (${configured}) is not an ADMIN. ` +
+          'Refusing to promote a MEMBER or assign legacy tasks to a non-admin.',
+      );
+    }
+    return row.id;
+  }
+
+  const admins = await client.query<{ id: number; email: string }>(
+    `SELECT id, email FROM users WHERE role = 'ADMIN' ORDER BY id`,
+  );
+  if (admins.rowCount === 1) {
+    return admins.rows[0].id;
+  }
+  if ((admins.rowCount ?? 0) === 0) {
+    throw new Error(
+      'Legacy tasks exist, but no ADMIN user is available to own them. ' +
+        'Create an ADMIN first (bootstrap only runs when users is empty, and never with a default password), ' +
+        'then set TASK_LEGACY_OWNER_EMAIL to that admin and retry. ' +
+        'Refusing to invent an administrator.',
+    );
+  }
+  throw new Error(
+    'Legacy tasks exist and multiple ADMIN users were found. ' +
+      'Set TASK_LEGACY_OWNER_EMAIL to the intended existing administrator email and retry.',
+  );
 }
 
 async function applyBaseline(client: PoolClient, migration: MigrationFile): Promise<void> {

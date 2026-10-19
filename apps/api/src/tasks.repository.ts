@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { Injectable, OnModuleInit } from '@nestjs/common';
+import { PublicUser } from './auth/auth.types';
 import { DatabaseService } from './database/database.service';
 import {
   buildTaskListSql,
@@ -9,12 +10,8 @@ import {
 } from './domain/task-query';
 import { NewTask, Task, TaskStatus } from './domain/tasks';
 
-function isTestDatabase(): boolean {
-  return (process.env.DATABASE_URL ?? '').includes('flowops_test');
-}
-
 const TASK_COLUMNS = `
-  id, title, team, priority, status,
+  id, title, team, priority, status, owner_id AS "ownerId",
   created_at AS "createdAt", updated_at AS "updatedAt"
 `;
 
@@ -24,23 +21,11 @@ export class TasksRepository implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.database.ensureSchema();
-    const existing = await this.database.pool.query<{ count: string }>('SELECT COUNT(*) AS count FROM tasks');
-    if (!isTestDatabase() && Number(existing.rows[0]?.count) === 0) {
-      const examples: NewTask[] = [
-        { title: 'Review API gateway error logs', team: 'Platform', priority: 'high' },
-        { title: 'Refactor customer onboarding form', team: 'Frontend', priority: 'medium' },
-        { title: 'Write integration tests for task API', team: 'Backend', priority: 'high' },
-        { title: 'Improve analytics table filters', team: 'Frontend', priority: 'low' },
-        { title: 'Document local setup and releases', team: 'Platform', priority: 'medium' },
-      ];
-      for (const item of examples) await this.create(item);
-      await this.database.pool.query("UPDATE tasks SET status = 'in_progress' WHERE title LIKE 'Refactor%'");
-      await this.database.pool.query("UPDATE tasks SET status = 'done' WHERE title LIKE 'Document%'");
-    }
   }
 
-  async findPage(query: TaskListQuery): Promise<PaginatedTasks> {
-    const { whereSql, params, orderSql, limit, offset } = buildTaskListSql(query);
+  async findPage(query: TaskListQuery, user: PublicUser): Promise<PaginatedTasks> {
+    const ownerId = user.role === 'ADMIN' ? undefined : user.id;
+    const { whereSql, params, orderSql, limit, offset } = buildTaskListSql(query, ownerId);
     const count = await this.database.pool.query<{ total: number }>(
       `SELECT COUNT(*)::int AS total FROM tasks ${whereSql}`,
       params,
@@ -53,21 +38,27 @@ export class TasksRepository implements OnModuleInit {
     return { items: result.rows, pagination: paginationMeta(total, query.page, query.limit) };
   }
 
-  async create(payload: NewTask): Promise<Task> {
+  async create(payload: NewTask, ownerId: number): Promise<Task> {
     const result = await this.database.pool.query<Task>(
-      `INSERT INTO tasks (title, team, priority) VALUES ($1, $2, $3)
+      `INSERT INTO tasks (title, team, priority, owner_id) VALUES ($1, $2, $3, $4)
        RETURNING ${TASK_COLUMNS}`,
-      [payload.title, payload.team, payload.priority],
+      [payload.title, payload.team, payload.priority, ownerId],
     );
     return result.rows[0];
   }
 
-  async updateStatus(id: number, status: TaskStatus): Promise<Task | null> {
-    const result = await this.database.pool.query<Task>(
-      `UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2
-       RETURNING ${TASK_COLUMNS}`,
-      [status, id],
-    );
+  async updateStatus(id: number, status: TaskStatus, user: PublicUser): Promise<Task | null> {
+    const result = user.role === 'ADMIN'
+      ? await this.database.pool.query<Task>(
+        `UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2
+         RETURNING ${TASK_COLUMNS}`,
+        [status, id],
+      )
+      : await this.database.pool.query<Task>(
+        `UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 AND owner_id = $3
+         RETURNING ${TASK_COLUMNS}`,
+        [status, id, user.id],
+      );
     return result.rows[0] ?? null;
   }
 }

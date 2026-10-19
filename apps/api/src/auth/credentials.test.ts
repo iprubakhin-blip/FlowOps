@@ -32,4 +32,13 @@ test('CSRF allows trusted SPA requests and denies cross-site form posts', () => 
     requestedWith: 'FlowOpsWeb',
     secFetchSite: 'cross-site',
   }), 'deny');
+  assert.equal(csrfDecision({
+    method: 'POST',
+    requestedWith: 'FlowOpsWeb',
+  }), 'allow');
+  assert.equal(csrfDecision({
+    method: 'POST',
+    requestedWith: 'XMLHttpRequest',
+    origin: 'http://127.0.0.1:4300',
+  }), 'deny');
 });

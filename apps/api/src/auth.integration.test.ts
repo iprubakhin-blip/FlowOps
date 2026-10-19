@@ -65,6 +65,7 @@ async function insertMember(): Promise<void> {
 }
 
 before(async () => {
+  process.env.NODE_ENV = 'test';
   process.env.JWT_SECRET = 'test-only-jwt-secret-32-chars-min';
   process.env.AUTH_COOKIE_SECURE = 'false';
   process.env.AUTH_WEB_ORIGIN = 'http://127.0.0.1:4300';
@@ -82,10 +83,6 @@ before(async () => {
   await app.listen(0, '127.0.0.1');
   baseUrl = await app.getUrl();
   pool = new Pool({ connectionString: testUrl });
-  await pool.query('TRUNCATE TABLE tasks RESTART IDENTITY CASCADE');
-  await pool.query(
-    `INSERT INTO tasks (title, team, priority) VALUES ('Preserve me', 'QA', 'low')`,
-  );
 });
 
 beforeEach(async () => {
@@ -152,6 +149,7 @@ test('GET /api/auth/me accepts the access cookie and a Bearer token', async () =
 
   const viaBearer = await json('/api/auth/me', { headers: { Authorization: `Bearer ${access}` } });
   assert.equal(viaBearer.status, 200);
+  assert.equal(viaCookie.response.headers.get('cache-control'), 'no-store');
   assert.equal((await json('/api/auth/me')).status, 401);
 });
 
@@ -242,6 +240,25 @@ test('logout revokes the family, clears cookies, and is idempotent', async () =>
   assert.equal(second.status, 200);
 });
 
+test('logout with a hostile Origin is rejected and leaves the refresh family live', async () => {
+  await insertMember();
+  const session = await login();
+  const denied = await json('/api/auth/logout', {
+    method: 'POST',
+    headers: {
+      ...AUTH_HEADERS,
+      Origin: 'https://evil.example',
+      Cookie: `${REFRESH_COOKIE}=${session.cookies.values[REFRESH_COOKIE]}`,
+    },
+  });
+  assert.equal(denied.status, 403);
+  const refresh = await json('/api/auth/refresh', {
+    method: 'POST',
+    headers: { ...AUTH_HEADERS, Cookie: `${REFRESH_COOKIE}=${session.cookies.values[REFRESH_COOKIE]}` },
+  });
+  assert.equal(refresh.status, 200);
+});
+
 test('expired and revoked refresh tokens are rejected', async () => {
   await insertMember();
   const session = await login();
@@ -270,16 +287,16 @@ test('concurrent refresh of the same token cannot create two live successors', a
     json('/api/auth/refresh', { method: 'POST', headers: { ...AUTH_HEADERS, Cookie: cookie } }),
     json('/api/auth/refresh', { method: 'POST', headers: { ...AUTH_HEADERS, Cookie: cookie } }),
   ]);
-  const successes = [first, second].filter((result) => result.status === 200);
-  assert.ok(successes.length <= 1);
+  const statuses = [first.status, second.status].sort();
+  assert.deepEqual(statuses, [200, 401]);
   const live = await pool.query(
     `SELECT id FROM refresh_sessions
      WHERE revoked_at IS NULL AND replaced_at IS NULL AND expires_at > NOW()`,
   );
-  assert.ok((live.rowCount ?? 0) <= 1);
+  assert.equal(live.rowCount, 0);
 });
 
-test('CSRF protection rejects untrusted auth mutations and leaves the tasks API public', async () => {
+test('CSRF protection rejects untrusted auth mutations and anonymous tasks stay unauthorized', async () => {
   await insertMember();
   const missingHeader = await json('/api/auth/login', {
     method: 'POST',
@@ -294,31 +311,69 @@ test('CSRF protection rejects untrusted auth mutations and leaves the tasks API 
   const created = await json('/api/tasks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: 'Anonymous create still works', team: 'QA', priority: 'low' }),
+    body: JSON.stringify({ title: 'Anonymous create must fail', team: 'QA', priority: 'low' }),
   });
-  assert.equal(created.status, 201);
+  assert.equal(created.status, 401);
   const listed = await json('/api/tasks?search=Preserve%20me');
-  assert.equal((listed.body.pagination as { total: number }).total, 1);
+  assert.equal(listed.status, 401);
+
+  const wrongHeader = await json('/api/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      Origin: 'http://127.0.0.1:4300',
+    },
+    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+  });
+  assert.equal(wrongHeader.status, 403);
+
+  const crossSite = await json('/api/auth/login', {
+    method: 'POST',
+    headers: {
+      ...AUTH_HEADERS,
+      'Sec-Fetch-Site': 'cross-site',
+    },
+    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+  });
+  assert.equal(crossSite.status, 403);
+
+  const noOrigin = await login(EMAIL, PASSWORD, { Origin: '' });
+  assert.equal(noOrigin.status, 200);
+});
+
+test('stale JWT role claims and deleted users are rejected', async () => {
+  await insertMember();
+  const session = await login();
+  const access = session.cookies.values[ACCESS_COOKIE];
+  await pool.query(`UPDATE users SET role = 'ADMIN' WHERE email = $1`, [EMAIL]);
+  assert.equal((await json('/api/auth/me', { headers: { Cookie: `${ACCESS_COOKIE}=${access}` } })).status, 401);
+  await pool.query('TRUNCATE TABLE refresh_sessions, users RESTART IDENTITY CASCADE');
+  assert.equal((await json('/api/auth/me', { headers: { Authorization: `Bearer ${access}` } })).status, 401);
 });
 
 test('bootstrap creates the first admin once and never resets the hash', async () => {
   process.env.BOOTSTRAP_ALLOW_TEST = 'true';
   process.env.BOOTSTRAP_ADMIN_EMAIL = 'admin@example.com';
   process.env.BOOTSTRAP_ADMIN_PASSWORD = 'bootstrap-pass';
+  assert.equal(await bootstrapAdminIfConfigured(pool), 'created');
   const users = new UsersRepository({ pool } as DatabaseService);
-  assert.equal(await bootstrapAdminIfConfigured(users), 'created');
   const first = await users.findByEmail('admin@example.com');
   assert.equal(first?.role, 'ADMIN');
   assert.match(first?.passwordHash ?? '', /^\$argon2id\$/);
-  assert.equal(await bootstrapAdminIfConfigured(users), 'skipped');
+  assert.equal(await bootstrapAdminIfConfigured(pool), 'skipped');
   assert.equal((await users.findByEmail('admin@example.com'))?.passwordHash, first?.passwordHash);
 
   process.env.BOOTSTRAP_ADMIN_PASSWORD = '';
-  await assert.rejects(() => bootstrapAdminIfConfigured(users), /both BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD/);
+  await assert.rejects(() => bootstrapAdminIfConfigured(pool), /both BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD/);
   delete process.env.BOOTSTRAP_ADMIN_EMAIL;
   delete process.env.BOOTSTRAP_ADMIN_PASSWORD;
   delete process.env.BOOTSTRAP_ALLOW_TEST;
 
+  await pool.query(
+    `INSERT INTO tasks (title, team, priority, owner_id) VALUES ('Preserve me', 'QA', 'low', $1)`,
+    [first?.id],
+  );
   const preserved = await pool.query(`SELECT title FROM tasks WHERE title = 'Preserve me'`);
   assert.equal(preserved.rowCount, 1);
 });

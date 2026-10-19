@@ -14,6 +14,7 @@ let pool: Pool;
 let baseUrl: string;
 
 before(async () => {
+  process.env.NODE_ENV = 'test';
   process.env.JWT_SECRET = 'test-only-jwt-secret-32-chars-min';
   process.env.AUTH_COOKIE_SECURE = 'false';
   process.env.AUTH_WEB_ORIGIN = 'http://127.0.0.1:4300';
@@ -52,6 +53,7 @@ test('login returns 429 after five attempts in a minute', async () => {
         'Content-Type': 'application/json',
         'X-Requested-With': CSRF_HEADER_VALUE,
         Origin: 'http://127.0.0.1:4300',
+        'X-Forwarded-For': `203.0.113.${index + 1}`,
       },
       body: JSON.stringify({ email: 'rate@example.com', password: 'wrong-password-x' }),
     });

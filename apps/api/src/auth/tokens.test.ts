@@ -48,6 +48,45 @@ test('rejects a JWT with the wrong issuer or a bad signature', async (t) => {
   await assert.rejects(() => verifyAccessToken(badSig));
 });
 
+test('rejects expired tokens and the none algorithm', async (t) => {
+  t.after(() => {
+    delete process.env.JWT_SECRET;
+  });
+  process.env.JWT_SECRET = secret;
+  const key = new TextEncoder().encode(secret);
+  const expired = await new SignJWT({ role: 'MEMBER' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject('1')
+    .setJti('expired')
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) - 30)
+    .setIssuer(JWT_ISSUER)
+    .setAudience(JWT_AUDIENCE)
+    .sign(key);
+  await assert.rejects(() => verifyAccessToken(expired));
+
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({
+    sub: '1',
+    role: 'ADMIN',
+    iss: JWT_ISSUER,
+    aud: JWT_AUDIENCE,
+    exp: Math.floor(Date.now() / 1000) + 600,
+  })).toString('base64url');
+  await assert.rejects(() => verifyAccessToken(`${header}.${payload}.`));
+
+  const hs384 = await new SignJWT({ role: 'MEMBER' })
+    .setProtectedHeader({ alg: 'HS384' })
+    .setSubject('1')
+    .setJti('hs384')
+    .setIssuedAt()
+    .setExpirationTime('15m')
+    .setIssuer(JWT_ISSUER)
+    .setAudience(JWT_AUDIENCE)
+    .sign(new TextEncoder().encode(`${secret}${secret}`));
+  await assert.rejects(() => verifyAccessToken(hs384));
+});
+
 test('refresh tokens are opaque and hashed, not reversible from the hash', () => {
   const token = newRefreshToken();
   assert.equal(Buffer.from(token, 'base64url').length, 32);

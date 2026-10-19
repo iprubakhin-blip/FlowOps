@@ -1,3 +1,4 @@
+import { ValidationError } from '../http/validation-error';
 import { Credentials } from './auth.types';
 
 export const MAX_EMAIL_LENGTH = 254;
@@ -12,21 +13,21 @@ export function normalizeEmail(value: string): string {
 
 export function parseCredentials(input: unknown): Credentials {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-    throw new Error('Body must be a JSON object.');
+    throw new ValidationError('Body must be a JSON object.');
   }
   const raw = input as Record<string, unknown>;
   if (typeof raw.email !== 'string') {
-    throw new Error('Email is invalid.');
+    throw new ValidationError('Email is invalid.');
   }
   const email = normalizeEmail(raw.email);
   if (!email || email.length > MAX_EMAIL_LENGTH || !EMAIL_PATTERN.test(email)) {
-    throw new Error('Email is invalid.');
+    throw new ValidationError('Email is invalid.');
   }
   if (typeof raw.password !== 'string') {
-    throw new Error('Password is invalid.');
+    throw new ValidationError('Password is invalid.');
   }
   if (raw.password.length < MIN_PASSWORD_LENGTH || raw.password.length > MAX_PASSWORD_LENGTH) {
-    throw new Error('Password is invalid.');
+    throw new ValidationError('Password is invalid.');
   }
   return { email, password: raw.password };
 }

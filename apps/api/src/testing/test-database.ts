@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { isIsolatedTestDatabaseName } from '../auth/auth.config';
 
 const DEFAULT_DEV_URL = 'postgresql://flowops:flowops_dev_password@127.0.0.1:5432/flowops';
 const TEST_DB = 'flowops_test';
@@ -21,21 +22,15 @@ export function isolatedTestDatabaseUrl(): string {
   const name = databaseName(url);
   if (name === 'flowops') url.pathname = `/${TEST_DB}`;
   const testName = databaseName(url);
-  if (!testName || testName === 'flowops') {
+  if (!isIsolatedTestDatabaseName(testName)) {
     throw new Error('Refusing to run integration tests against the development database.');
-  }
-  if (!/^[a-z][a-z0-9_]*$/.test(testName)) {
-    throw new Error(`Unsafe test database name: ${testName}`);
   }
   return toConnectionString(url);
 }
 
 export function namedIsolatedTestDatabaseUrl(name: string): string {
-  if (!name || name === 'flowops') {
-    throw new Error('Refusing to run integration tests against the development database.');
-  }
-  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
-    throw new Error(`Unsafe test database name: ${name}`);
+  if (!isIsolatedTestDatabaseName(name)) {
+    throw new Error('Refusing to run integration tests against a non-isolated database. Use flowops_test or flowops_test_<label>.');
   }
   const source = process.env.DATABASE_URL ?? DEFAULT_DEV_URL;
   const url = toUrl(source);
@@ -45,8 +40,8 @@ export function namedIsolatedTestDatabaseUrl(name: string): string {
 
 export function assertIsolatedTestDatabaseUrl(connectionString: string): string {
   const name = databaseName(toUrl(connectionString));
-  if (!name || name === 'flowops') {
-    throw new Error('Refusing to run destructive tests against the development database.');
+  if (!isIsolatedTestDatabaseName(name)) {
+    throw new Error('Refusing to run destructive tests against a non-isolated database. Use flowops_test or flowops_test_<label>.');
   }
   return name;
 }

@@ -2,7 +2,7 @@
 
 **A lightweight operations dashboard built with Angular, NestJS, PostgreSQL and TypeScript.**
 
-> **Project status:** early portfolio demo (`v0.1`). This is a self-authored learning and portfolio project, **not** a commercial customer deployment. Screens and data are synthetic. Backend authentication exists; the Angular dashboard is still anonymous. Multi-tenancy and production hardening are not complete.
+> **Project status:** early portfolio demo (`v0.1`). This is a self-authored learning and portfolio project, **not** a commercial customer deployment. Screens and data are synthetic. Backend authentication, task ownership, and a protected Angular dashboard exist. Multi-tenancy and production hardening are not complete.
 
 ## What it does
 
@@ -11,7 +11,7 @@
 - Create new tasks with both client-side and server-side validation.
 - Update task statuses (`To do`, `In progress`, `Done`) and persist changes.
 - Show dashboard totals from server pagination metadata for the current query, not from the current page of rows.
-- Load initial example data automatically into a fresh local database.
+- Every task has an owner. MEMBER users only see their own tasks; ADMIN can see all.
 
 ### Stack
 
@@ -69,7 +69,7 @@ npm run test:integration
 npm run build
 ```
 
-`npm run test` runs API domain/auth unit tests and Angular service/query tests (Node.js `node:test` via `tsx`). `npm run test:integration` runs Nest tests against isolated databases (`flowops_test`, `flowops_test_migrate`, `flowops_test_auth`, `flowops_test_auth_rl`). Those suites never drop, truncate, or migrate-reset `flowops`. Postgres must be running (`docker compose up -d`). GitHub Actions runs both suites. The production build compiles API and web. There are no browser E2E tests in CI.
+`npm run test` runs API domain/auth unit tests and Angular service/query tests (Node.js `node:test` via `tsx`). `npm run test:integration` runs Nest tests against isolated databases (`flowops_test`, `flowops_test_migrate`, `flowops_test_auth`, `flowops_test_auth_rl`). Those suites never drop, truncate, or migrate-reset `flowops`. Postgres must be running (`docker compose up -d`). GitHub Actions runs both suites. The production build compiles API and web. There are no browser E2E tests in CI. M2.2-B protects the dashboard route and sends CSRF headers on task writes. A local browser pass at `http://127.0.0.1:4300` covered anonymous redirect, admin login, list/create/status/search, session restore, and logout. MEMBER UI and forced token expiry were not exercised in that walkthrough. Cross-tab refresh can still sign both tabs out.
 
 ### Database migrations
 
@@ -80,10 +80,17 @@ The API applies versioned SQL from `apps/api/migrations/` on startup, before tas
 | `001_baseline_tasks.sql` | Creates `tasks` on a fresh database. On an existing FlowOps database it **verifies** the current `tasks` columns/constraints and records the baseline without rewriting the table or touching rows. An incompatible `tasks` table fails the startup instead of being marked applied. |
 | `002_create_users.sql` | Adds `users` (unique `LOWER(email)`, role `ADMIN`/`MEMBER`). No user rows are inserted. |
 | `003_create_refresh_sessions.sql` | Adds `refresh_sessions` (FK to `users`, unique `token_hash`). No session rows are inserted. |
+| `004_task_owner.sql` | Adds `tasks.owner_id` (FK to `users`, index `(owner_id, created_at DESC, id DESC)`). TypeScript backfill assigns unowned legacy rows to an existing ADMIN, then `owner_id` is `NOT NULL`. |
 
-Fresh install: `docker compose up -d` then `npm run dev:api` — migrations create the schema, then empty `tasks` is seeded with the sample rows.
+Fresh install: `docker compose up -d` then `npm run dev:api` — migrations create the schema including `owner_id NOT NULL`. Empty databases with **zero users and zero tasks** migrate successfully. Automatic demo task seeding is **disabled**; there is no ownerless seed and no hardcoded demo password. Create tasks after logging in as the bootstrap admin (or any user).
 
-Existing local `flowops` volume: the same startup applies pending migrations only. Task rows are not deleted by schema migrations. Task ownership (`owner_id`) is not applied yet.
+Existing local `flowops` volume: pending migrations apply on API startup. Task rows are not deleted. Unowned legacy tasks are assigned to:
+
+1. `TASK_LEGACY_OWNER_EMAIL` when set (must already be an ADMIN — members are not promoted).
+2. Otherwise the single existing ADMIN.
+3. If unowned tasks exist and no suitable ADMIN exists, or several ADMINs exist without `TASK_LEGACY_OWNER_EMAIL`, migration **stops** with an actionable error and rolls back. It never creates an admin with a default password.
+
+Migrations currently run **before** admin bootstrap. Bootstrap still only runs when `users` is empty, so it cannot create an owner for pre-existing tasks. Provision an ADMIN before retrying 004 if legacy task rows already exist.
 
 There is no `migrate` CLI; starting the API is enough. Re-running startup is idempotent when SQL files are unchanged. Changing an already-applied file is rejected via checksum.
 
@@ -92,9 +99,9 @@ There is no `migrate` CLI; starting the API is enough. Re-running startup is ide
 | HTTP | Endpoint | Auth | Description |
 |---|---|---|---|
 | GET | `/api/health` | Public | Service health |
-| GET | `/api/tasks` | Public | List tasks with optional paging, filters, search and sort |
-| POST | `/api/tasks` | Public | Add task (`title`, `team`, `priority`) |
-| PATCH | `/api/tasks/:id/status` | Public | Update status (`todo`, `in_progress`, `done`) |
+| GET | `/api/tasks` | Access cookie or Bearer | List tasks visible to the caller (MEMBER: own; ADMIN: all) |
+| POST | `/api/tasks` | Access + CSRF | Add task owned by the authenticated user |
+| PATCH | `/api/tasks/:id/status` | Access + CSRF | Update status on a visible task |
 | POST | `/api/auth/login` | Public + CSRF | Email/password login; sets cookies |
 | POST | `/api/auth/refresh` | Refresh cookie + CSRF | Rotate refresh session; sets new cookies |
 | POST | `/api/auth/logout` | Cookie optional + CSRF | Revoke session family; clear cookies |
@@ -102,16 +109,35 @@ There is no `migrate` CLI; starting the API is enough. Re-running startup is ide
 
 ### Authentication
 
-The Angular dashboard does **not** send credentials yet. Task routes stay public until M2.2-A.
+Angular has a login page at **`/login`**. Serve the SPA at **http://127.0.0.1:4300** (not `localhost`) so cookies and `Origin` match `AUTH_WEB_ORIGIN`. The dashboard at **`/`** requires `authGuard`: anonymous users go to `/login` (optional safe relative `returnUrl`). Already-authenticated visits to `/login` bounce to `/`. The guard waits for `restoreSession()` rather than treating “not initialized” as logged out. Do not treat SameSite=Lax as sufficient CSRF protection.
+
+**Roles (UI copy only — the API still enforces access):** ADMIN sees “All tasks” and filter totals for every visible row. MEMBER sees “My tasks”; KPI captions are scoped to that user’s matching tasks, not a global count. Create/status controls stay available because the backend already scopes writes to the session user. There is no assignment UI and `ownerId` is display/server-only.
+
+**HTTP errors:** 401 on APIs other than login/refresh/logout may refresh the access cookie once (single-flight). Failed refresh clears client session and returns to `/login`. 403 (CSRF) and 404 (missing or hidden task) do **not** trigger refresh.
+
+**SPA session**
+
+- `GET /api/auth/me` on startup (`provideAppInitializer`). HttpOnly cookies are sent via `withCredentials`.
+- Expired access cookie: interceptor `POST /api/auth/refresh` once (CSRF header), then retries the original request.
+- Concurrent 401s in the **same tab** share one in-flight refresh.
+- **Multi-tab:** browsers that implement the Web Locks API (Chrome 69+, Firefox 96+, Safari 15.4+) serialize refresh under lock name `flowops-auth-refresh` so tabs wait and then present the **current** HttpOnly cookie. Tokens are not written to web storage or posted between tabs. Server reuse detection is unchanged: a replaced token still revokes the family. Without Web Locks, two tabs can still race and sign the user out.
+- Logout: `POST /api/auth/logout` with `X-Requested-With: FlowOpsWeb`. Local user state is cleared only after a successful response, then navigate to `/login`. Access JWTs may still verify for up to 15 minutes.
+- Tokens are never read from or written to `localStorage` / `sessionStorage`.
+- Auth POSTs and task POST/PATCH send `X-Requested-With: FlowOpsWeb`. GET requests do not.
+
+**Try login locally:** set `JWT_SECRET` (≥32 chars) and optional `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` in `.env`, start API then `npm run dev:web`, open `http://127.0.0.1:4300/login`. Do not commit those values. If bootstrap was already applied, use that admin account. If `JWT_SECRET` is missing, login returns **503**.
 
 **Environment**
 
 | Variable | Purpose |
 |---|---|
-| `JWT_SECRET` | HS256 secret, **minimum 32 characters**. Required for `/api/auth/*`. If missing, the API still serves tasks; auth endpoints return **503**. Never commit a real secret. |
-| `AUTH_COOKIE_SECURE` | `true`/`false`. Default `true` when `NODE_ENV=production`. Local HTTP at `http://127.0.0.1:4300` must use `false`. |
+| `JWT_SECRET` | HS256 secret, **minimum 32 characters**. Required for `/api/auth/*` and `/api/tasks*`. If missing, those endpoints return **503**. Never commit a real secret. |
+| `NODE_ENV` | Must be `production`, `development`, or `test`. Unset or unknown values refuse to start instead of silently using development cookie/JWT defaults. `npm run start` forces `production`. `npm run start:dev` uses Nest's development mode. |
+| `AUTH_COOKIE_SECURE` | `true`/`false`. Default `true` when `NODE_ENV=production`. Local HTTP at `http://127.0.0.1:4300` must use `false`. **Production fails closed:** the process refuses to start if this is `false`, invalid, or cookies would not be Secure. Missing/short `JWT_SECRET` also refuses production start. |
 | `AUTH_WEB_ORIGIN` | Allowed `Origin` values (comma-separated). Default `http://127.0.0.1:4300`. |
+| `AUTH_ACCESS_TTL_SECONDS` | Isolated non-production only. Shortens access JWT and `flowops_at` maxAge. Production always uses 15 minutes. |
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | Optional first ADMIN. Set **both** or neither. Applied only when `users` is empty. Does not reset an existing password. |
+| `TASK_LEGACY_OWNER_EMAIL` | Existing ADMIN email used to own unowned legacy tasks when more than one ADMIN exists. Not used to create or promote users. |
 
 Provision the first admin: put a strong password in `.env` (not in git), start the API once, then remove the bootstrap variables if you want. Logs never include the password or hash.
 
@@ -126,13 +152,29 @@ Tokens are never returned in JSON. Production must be HTTPS so `Secure` cookies 
 
 **Refresh rotation:** presented refresh token is hashed (SHA-256) and locked with `SELECT … FOR UPDATE`. A valid unused row is marked `replaced_at` and exactly one successor is inserted in the same transaction. Reuse of a replaced token **revokes the whole family**. Logout revokes the family and is idempotent. Access JWTs remain valid until expiry (no denylist); that is a documented 15-minute window after logout.
 
-**Multi-tab race:** two concurrent refreshes of the same token are serialized. The second request is treated as reuse and revokes the family, which can sign the user out of every tab. Future Angular code must single-flight refresh. The backend does not weaken reuse detection to hide that race.
+**Refresh concurrency:** two HTTP refreshes of the same token are serialized in PostgreSQL (`FOR UPDATE`). The second use of a **replaced** token is treated as replay and revokes the family. Same-tab Angular requests share one refresh. Cross-tab Angular uses Web Locks when available (see above). There is no refresh grace window.
 
-**CSRF (auth mutations only):** `POST /api/auth/login|refresh|logout` require header `X-Requested-With: FlowOpsWeb`. If `Origin` is present it must match `AUTH_WEB_ORIGIN`. `Sec-Fetch-Site: cross-site` is rejected. Non-browser clients should send the custom header; they may omit `Origin`. **Task write endpoints do not require this header yet.** CORS remains disabled (no credentialed `*`).
+**Authenticated HTTP caching:** `/api/auth/*` and `/api/tasks*` responses set `Cache-Control: no-store`.
+
+**CSRF:** `POST /api/auth/login|refresh|logout`, `POST /api/tasks`, and `PATCH /api/tasks/:id/status` require header `X-Requested-With: FlowOpsWeb`. If `Origin` is present it must match `AUTH_WEB_ORIGIN`. `Sec-Fetch-Site: cross-site` is rejected. GET remains CSRF-exempt. SameSite=Lax is not treated as sufficient. CORS remains disabled (no credentialed `*`).
+
+**Authorization (tasks):** AuthGuard verifies the JWT then loads the user from PostgreSQL. Authorization uses that **database** `id`/`role`, never `ownerId` / `role` from request JSON or query parameters. If the DB role no longer matches the JWT `role` claim (or the user is gone), the request is **401** — role changes take effect on the next authenticated request, not at JWT expiry.
+
+| Role | List / search / filter / sort / page | Create | PATCH status |
+|---|---|---|---|
+| Anonymous | 401 | 401 | 401 |
+| MEMBER | Own rows only (`owner_id` in SQL, including `COUNT`) | Always `owner_id` = self | Own rows; other users' ids and missing ids → **404** |
+| ADMIN | All rows | Always `owner_id` = self (no assignment to others) | Any task |
+
+There is no task deletion and no assignment API.
 
 **Rate limits** (in-memory, per API process, per IP from `req.ip` — `X-Forwarded-For` is ignored): login **5/minute**, refresh **20/minute**, HTTP **429**. Health checks are not throttled. Multiple instances each have their own counters.
 
-**JWT:** `jose` HS256, issuer `flowops`, audience `flowops-web`, claims `sub`, `role`, `jti`, `iat`, `exp`. Cookie or `Authorization: Bearer`. Passwords are Argon2id (OWASP-style 19 MiB, t=2, p=1). Unknown emails still run a dummy verify. Public registration is not implemented.
+**JWT:** `jose` HS256 only (`alg` is allowlisted), issuer `flowops`, audience `flowops-web`, claims `sub`, `role`, `jti`, `iat`, `exp`. `Authorization: Bearer` is preferred over the access cookie when both are present. Passwords are Argon2id (OWASP-style 19 MiB, t=2, p=1). Unknown emails still run a dummy verify. Public registration is not implemented.
+
+**MEMBER browser checks:** do not insert disposable users into the local `flowops` database. Use an isolated DB (`flowops_test*`) and HTTP integration tests, or a dedicated local instance. GitHub Actions has not been assumed to have run on this branch; run `npm run test`, `npm run test:integration`, and `npm run build` locally. Backups under `backups/` are gitignored and contain password hashes — keep them private.
+
+A local **ADMIN** browser pass was executed in M2.2-B. MEMBER UI in a real browser is still a manual isolated-instance check.
 
 `GET /api/tasks` query parameters:
 
@@ -158,10 +200,14 @@ Invalid values return **HTTP 400**. Filtering, search, sort and pagination run i
 Example requests:
 
 ```bash
-curl "http://localhost:3000/api/tasks?page=1&limit=20&status=todo&priority=high&search=gateway&sortBy=createdAt&sortOrder=desc"
+curl "http://localhost:3000/api/tasks?page=1&limit=20&status=todo&priority=high&search=gateway&sortBy=createdAt&sortOrder=desc" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
 
 curl -X POST http://localhost:3000/api/tasks \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "X-Requested-With: FlowOpsWeb" \
+  -H "Origin: http://127.0.0.1:4300" \
   -d '{"title":"Refine team dashboard","team":"Frontend","priority":"high"}'
 ```
 
@@ -171,7 +217,7 @@ curl -X POST http://localhost:3000/api/tasks \
 2. **Typed DTO validation and parameterized SQL.** Server validates external inputs instead of trusting the UI.
 3. **Angular signals + RxJS.** The task list is driven by the paged API. Search uses `debounceTime(300)`, `distinctUntilChanged` and `switchMap`. Dashboard numbers use the server `pagination.total`, not counts from the current page.
 4. **Minimal dependencies.** UI uses native HTML controls and custom CSS rather than a large component library.
-5. **Explicit scope.** Backend login/refresh/logout exist; the SPA is still anonymous and task routes are still public. RBAC and task ownership are not implemented. There is no dedicated `team` query parameter: team matching is part of `search`. Do not expose this API on the public internet without the Angular auth UI and task authorization.
+5. **Explicit scope.** Login, CSRF (including task writes), task ownership, and a guarded dashboard are implemented. There is no dedicated `team` query parameter: team matching is part of `search`. There is no public registration, OAuth, or workspace model. Cross-tab refresh is coordinated with Web Locks when the browser supports it; otherwise two tabs can still race. This is a local/demo project, not a production deployment.
 
 Future improvements are recorded in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 

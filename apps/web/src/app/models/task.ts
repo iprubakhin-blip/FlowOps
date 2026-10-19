@@ -23,6 +23,7 @@ export interface Task {
   team: string;
   status: Status;
   priority: Priority;
+  ownerId: number;
   createdAt: string;
   updatedAt: string;
 }

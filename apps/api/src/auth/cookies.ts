@@ -1,17 +1,15 @@
 import { Response } from 'express';
 import {
   ACCESS_COOKIE,
-  ACCESS_TTL_SECONDS,
   REFRESH_COOKIE,
   REFRESH_TTL_SECONDS,
 } from './auth.constants';
-import { cookieSecure } from './auth.config';
+import { accessTtlSeconds, cookieSecure } from './auth.config';
 
 const accessCookieOptions = {
   httpOnly: true,
   sameSite: 'lax' as const,
   path: '/api',
-  maxAge: ACCESS_TTL_SECONDS * 1000,
 };
 
 const refreshCookieOptions = {
@@ -23,7 +21,11 @@ const refreshCookieOptions = {
 
 export function setAuthCookies(response: Response, accessToken: string, refreshToken: string): void {
   const secure = cookieSecure();
-  response.cookie(ACCESS_COOKIE, accessToken, { ...accessCookieOptions, secure });
+  response.cookie(ACCESS_COOKIE, accessToken, {
+    ...accessCookieOptions,
+    secure,
+    maxAge: accessTtlSeconds() * 1000,
+  });
   response.cookie(REFRESH_COOKIE, refreshToken, { ...refreshCookieOptions, secure });
 }
 

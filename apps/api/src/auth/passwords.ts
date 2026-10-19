@@ -1,15 +1,11 @@
 import { argon2id, hash, verify } from 'argon2';
-
-// OWASP Argon2id baseline for interactive logins: 19 MiB, 2 iterations, 1 lane.
-// Tests may lower AUTH_ARGON2_MEMORY / AUTH_ARGON2_TIME; do not lower production defaults.
-const DEFAULT_MEMORY = 19_456;
-const DEFAULT_TIME = 2;
+import { argon2MemoryCost, argon2TimeCost } from './auth.config';
 
 function hashOptions(): { type: typeof argon2id; memoryCost: number; timeCost: number; parallelism: number } {
   return {
     type: argon2id,
-    memoryCost: Number(process.env.AUTH_ARGON2_MEMORY ?? DEFAULT_MEMORY),
-    timeCost: Number(process.env.AUTH_ARGON2_TIME ?? DEFAULT_TIME),
+    memoryCost: argon2MemoryCost(),
+    timeCost: argon2TimeCost(),
     parallelism: 1,
   };
 }
