@@ -8,3 +8,5 @@ coverage/
 !.env.example
 .DS_Store
 .vscode/
+backups/
+*qa-secrets.json

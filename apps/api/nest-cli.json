@@ -2,5 +2,15 @@
   "$schema": "https://json.schemastore.org/nest-cli",
   "collection": "@nestjs/schematics",
   "sourceRoot": "src",
-  "compilerOptions": {"deleteOutDir": true, "tsConfigPath": "tsconfig.build.json"}
+  "compilerOptions": {
+    "deleteOutDir": true,
+    "tsConfigPath": "tsconfig.build.json",
+    "assets": [
+      {
+        "include": "../migrations/*.sql",
+        "watchAssets": true,
+        "outDir": "./dist/migrations"
+      }
+    ]
+  }
 }

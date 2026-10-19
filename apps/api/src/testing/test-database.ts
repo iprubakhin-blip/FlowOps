@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { isIsolatedTestDatabaseName } from '../auth/auth.config';
 
 const DEFAULT_DEV_URL = 'postgresql://flowops:flowops_dev_password@127.0.0.1:5432/flowops';
 const TEST_DB = 'flowops_test';
@@ -21,18 +22,33 @@ export function isolatedTestDatabaseUrl(): string {
   const name = databaseName(url);
   if (name === 'flowops') url.pathname = `/${TEST_DB}`;
   const testName = databaseName(url);
-  if (!testName || testName === 'flowops') {
+  if (!isIsolatedTestDatabaseName(testName)) {
     throw new Error('Refusing to run integration tests against the development database.');
-  }
-  if (!/^[a-z][a-z0-9_]*$/.test(testName)) {
-    throw new Error(`Unsafe test database name: ${testName}`);
   }
   return toConnectionString(url);
 }
 
-export async function ensureIsolatedTestDatabase(): Promise<string> {
-  const testUrl = isolatedTestDatabaseUrl();
-  const testName = databaseName(toUrl(testUrl));
+export function namedIsolatedTestDatabaseUrl(name: string): string {
+  if (!isIsolatedTestDatabaseName(name)) {
+    throw new Error('Refusing to run integration tests against a non-isolated database. Use flowops_test or flowops_test_<label>.');
+  }
+  const source = process.env.DATABASE_URL ?? DEFAULT_DEV_URL;
+  const url = toUrl(source);
+  url.pathname = `/${name}`;
+  return toConnectionString(url);
+}
+
+export function assertIsolatedTestDatabaseUrl(connectionString: string): string {
+  const name = databaseName(toUrl(connectionString));
+  if (!isIsolatedTestDatabaseName(name)) {
+    throw new Error('Refusing to run destructive tests against a non-isolated database. Use flowops_test or flowops_test_<label>.');
+  }
+  return name;
+}
+
+export async function ensureIsolatedTestDatabase(name?: string): Promise<string> {
+  const testUrl = name ? namedIsolatedTestDatabaseUrl(name) : isolatedTestDatabaseUrl();
+  const testName = assertIsolatedTestDatabaseUrl(testUrl);
   const adminUrl = toUrl(process.env.DATABASE_URL ?? DEFAULT_DEV_URL);
   adminUrl.pathname = '/flowops';
   const admin = new Pool({ connectionString: toConnectionString(adminUrl) });
@@ -45,4 +61,12 @@ export async function ensureIsolatedTestDatabase(): Promise<string> {
     await admin.end();
   }
   return testUrl;
+}
+
+export async function resetPublicSchema(pool: Pool, connectionString: string): Promise<void> {
+  assertIsolatedTestDatabaseUrl(connectionString);
+  await pool.query('DROP SCHEMA public CASCADE');
+  await pool.query('CREATE SCHEMA public');
+  await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
+  await pool.query('GRANT ALL ON SCHEMA public TO public');
 }

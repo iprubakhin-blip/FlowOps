@@ -8,6 +8,20 @@ test('accepts a valid new task and trims its text fields', () => {
   });
 });
 
+test('ignores client-supplied owner and role fields', () => {
+  assert.deepEqual(
+    parseCreateTask({
+      title: 'Owned by server',
+      team: 'Backend',
+      priority: 'low',
+      ownerId: 99,
+      owner_id: 99,
+      role: 'ADMIN',
+    }),
+    { title: 'Owned by server', team: 'Backend', priority: 'low' },
+  );
+});
+
 test('rejects missing fields and unsupported priorities', () => {
   assert.throws(() => parseCreateTask({ title: 'x', team: 'IT', priority: 'high' }), /Title/);
   assert.throws(() => parseCreateTask({ title: 'Real task', team: 'IT', priority: 'urgent' }), /Priority/);

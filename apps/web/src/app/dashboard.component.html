@@ -5,28 +5,42 @@
     <div class="side-label">WORKSPACE</div>
     <nav aria-label="Main navigation">
       <a class="nav-item active" href="#overview"><span class="nav-icon">▦</span> Overview</a>
-      <a class="nav-item" href="#tasks"><span class="nav-icon">☷</span> All tasks</a>
+      <a class="nav-item" href="#tasks"><span class="nav-icon">☷</span> {{ heading() }}</a>
     </nav>
     <div class="sidebar-bottom"><div class="side-label">PORTFOLIO DEMO</div><p>A full-stack Angular + NestJS application with PostgreSQL.</p><span class="version">v0.1 · Open source</span></div>
   </aside>
 
   <main class="main" id="overview">
-    <header class="topbar"><div class="breadcrumbs">Workspace <span>/</span> <strong>Overview</strong></div><span class="demo-badge"><span class="online-dot"></span> Demo workspace</span></header>
+    <header class="topbar">
+      <div class="breadcrumbs">Workspace <span>/</span> <strong>Overview</strong></div>
+      <div class="session">
+        @if (auth.currentUser(); as user) {
+          <span class="user-chip" [attr.title]="user.email">
+            <span class="user-email">{{ user.email }}</span>
+            <span class="user-role">{{ user.role }}</span>
+          </span>
+          <button class="ghost-button" type="button" [disabled]="auth.loading()" (click)="logout()">Log out</button>
+        } @else {
+          <span class="demo-badge">Restoring session…</span>
+        }
+      </div>
+    </header>
     <div class="content">
-      <div class="heading-row"><div><div class="eyebrow">TEAM OPERATIONS</div><h1>Work overview<span class="h1-dot">.</span></h1><p class="subtitle">Stay on top of your team's work, priorities and progress.</p></div><button class="primary-button" type="button" (click)="showForm.set(!showForm())"><span>＋</span> {{ showForm() ? 'Close form' : 'New task' }}</button></div>
+      <div class="heading-row"><div><div class="eyebrow">TEAM OPERATIONS</div><h1>Work overview<span class="h1-dot">.</span></h1><p class="subtitle">{{ subtitle() }}</p></div><button class="primary-button" type="button" (click)="showForm.set(!showForm())"><span>＋</span> {{ showForm() ? 'Close form' : 'New task' }}</button></div>
 
       <section class="stats-grid" aria-label="Task metrics">
-        <div class="stat-card"><div class="stat-top"><span>Matching tasks</span><span class="stat-symbol purple">▦</span></div><strong>{{ matchingTotal() }}</strong><div class="stat-bottom">Server total for current filters</div></div>
+        <div class="stat-card"><div class="stat-top"><span>Matching tasks</span><span class="stat-symbol purple">▦</span></div><strong>{{ matchingTotal() }}</strong><div class="stat-bottom">{{ caption() }}</div></div>
         <div class="stat-card"><div class="stat-top"><span>This page</span><span class="stat-symbol blue">☷</span></div><strong>{{ pageItemCount() }}</strong><div class="stat-bottom">Rows loaded from the API</div></div>
         <div class="stat-card"><div class="stat-top"><span>Page</span><span class="stat-symbol orange">#</span></div><strong>{{ currentPage() }}<small>/{{ totalPages() }}</small></strong><div class="stat-bottom">Current page of matching tasks</div></div>
         <div class="stat-card"><div class="stat-top"><span>Page size</span><span class="stat-symbol green">☰</span></div><strong>{{ store.query().limit }}</strong><div class="stat-bottom">Maximum {{ pageSizes[pageSizes.length - 1] }} rows per request</div></div>
       </section>
 
+      @if (auth.error()) { <div class="alert" role="alert">{{ auth.error() }}</div> }
       @if (store.error()) { <div class="alert" role="alert">{{ store.error() }} <button type="button" (click)="store.reload()">Retry</button></div> }
 
       @if (showForm()) {
         <section class="panel create-panel" aria-label="Create a task">
-          <div class="panel-heading"><h2>Create a new task</h2><p>Tasks are saved to PostgreSQL through the NestJS API.</p></div>
+          <div class="panel-heading"><h2>Create a new task</h2><p>The API assigns ownership to your signed-in account.</p></div>
           <form (ngSubmit)="saveTask()" #taskForm="ngForm">
             <label class="form-field wide">Task title<input name="title" [(ngModel)]="draftTitle" required minlength="3" maxlength="120" placeholder="e.g. Build metrics endpoint" /></label>
             <label class="form-field">Team<input name="team" [(ngModel)]="draftTeam" required minlength="2" maxlength="60" /></label>
@@ -37,7 +51,7 @@
       }
 
       <section class="panel table-panel" id="tasks">
-        <div class="table-heading"><div><h2>All tasks</h2><p>Server-side search, filters, sort and pagination</p></div><span class="task-counter">{{ matchingTotal() }} matching</span></div>
+        <div class="table-heading"><div><h2>{{ heading() }}</h2><p>{{ tableHint() }}</p></div><span class="task-counter">{{ matchingTotal() }} matching</span></div>
         <div class="filters">
           <label class="search-label"><span>⌕</span><input type="search" maxlength="120" placeholder="Search title or team…" aria-label="Search tasks" [value]="search()" (input)="onSearch($any($event.target).value)" /></label>
           <select aria-label="Filter by status" [value]="store.query().status ?? 'all'" (change)="onStatusFilter($any($event.target).value)">
@@ -100,7 +114,7 @@
           </table>
         </div>
         <div class="table-footer">
-          <span>{{ store.loading() ? 'Loading…' : 'Showing ' + pageItemCount() + ' of ' + matchingTotal() + ' matching tasks' }}</span>
+          <span>{{ store.loading() ? 'Loading…' : footerLabel() }}</span>
           <div class="pager">
             <label class="page-size">Rows
               <select aria-label="Rows per page" [ngModel]="store.query().limit" [ngModelOptions]="{standalone: true}" (ngModelChange)="onPageSize($event)">

@@ -1,6 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { EMPTY, Subject, catchError, finalize, switchMap, take } from 'rxjs';
+import { taskLoadErrorMessage, taskWriteErrorMessage } from '../auth/auth.errors';
 import {
   DEFAULT_TASK_QUERY,
   NewTask,
@@ -60,8 +61,8 @@ export class TasksService {
         this.error.set(null);
         return this.http.get<PaginatedTasks>(this.endpoint, { params: toParams(query) }).pipe(
           finalize(() => this.loading.set(false)),
-          catchError(() => {
-            this.error.set('Could not load tasks. Check that the API and database are running.');
+          catchError((error: unknown) => {
+            this.error.set(taskLoadErrorMessage(error));
             return EMPTY;
           }),
         );
@@ -70,7 +71,6 @@ export class TasksService {
       this.tasks.set(result.items);
       this.pagination.set(result.pagination);
     });
-    this.reload();
   }
 
   reload(): void {
@@ -99,7 +99,7 @@ export class TasksService {
           this.reload();
           onSuccess();
         },
-        error: () => this.error.set('Could not create this task. Please try again.'),
+        error: (error: unknown) => this.error.set(taskWriteErrorMessage(error)),
       });
   }
 
@@ -110,7 +110,7 @@ export class TasksService {
       .pipe(take(1))
       .subscribe({
         next: () => this.reload(),
-        error: () => this.error.set('Could not update status. Please try again.'),
+        error: (error: unknown) => this.error.set(taskWriteErrorMessage(error)),
       });
   }
 }

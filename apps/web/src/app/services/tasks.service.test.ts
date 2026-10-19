@@ -3,8 +3,9 @@ import { HttpClient } from '@angular/common/http';
 import { Injector, runInInjectionContext } from '@angular/core';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Subject, of, throwError } from 'rxjs';
-import { DEFAULT_TASK_QUERY, PaginatedTasks, Task } from '../models/task';
+import { DEFAULT_TASK_QUERY, NewTask, PaginatedTasks, Task } from '../models/task';
 import {
   TasksService,
   applyQueryPatch,
@@ -13,7 +14,7 @@ import {
 } from './tasks.service';
 
 const taskA: Task = {
-  id: 1, title: 'A', team: 'QA', priority: 'low', status: 'todo',
+  id: 1, title: 'A', team: 'QA', priority: 'low', status: 'todo', ownerId: 7,
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 };
 const taskB: Task = { ...taskA, id: 2, title: 'B' };
@@ -29,7 +30,9 @@ function createService(http: object): TasksService {
   const injector = Injector.create({
     providers: [{ provide: HttpClient, useValue: http }],
   });
-  return runInInjectionContext(injector, () => new TasksService());
+  const store = runInInjectionContext(injector, () => new TasksService());
+  store.reload();
+  return store;
 }
 
 test('builds paginated query params without sending empty filters', () => {
@@ -117,12 +120,14 @@ test('records load errors and retry replaces them', () => {
 
 test('create resets to page 1 and reloads the list', () => {
   const requests: string[] = [];
+  let posted: NewTask | undefined;
   const http = {
     get: () => {
       requests.push('GET');
       return of(page([taskB], { page: 1, total: 2, totalPages: 1 }));
     },
-    post: () => {
+    post: (_url: string, body: NewTask) => {
+      posted = body;
       requests.push('POST');
       return of(taskB);
     },
@@ -134,6 +139,7 @@ test('create resets to page 1 and reloads the list', () => {
   assert.deepEqual(requests, ['GET', 'GET', 'POST', 'GET']);
   assert.equal(store.query().page, 1);
   assert.equal(saved, true);
+  assert.equal('ownerId' in posted, false);
 });
 
 test('status updates reload the current query', () => {
@@ -152,4 +158,16 @@ test('status updates reload the current query', () => {
   store.updateStatus(taskA, 'done');
   assert.deepEqual(requests, ['GET', 'PATCH', 'GET']);
   assert.equal(store.tasks()[0]?.status, 'done');
+});
+
+test('status 404 is shown without treating it as a session expiry', () => {
+  const http = {
+    get: () => of(page([taskA])),
+    patch: () => throwError(() => new HttpErrorResponse({ status: 404 })),
+  };
+  const store = createService(http);
+  store.updateStatus(taskA, 'done');
+  assert.match(store.error() ?? '', /no longer available/);
+  assert.doesNotMatch(store.error() ?? '', /session expired/);
+  assert.equal(store.tasks()[0]?.ownerId, 7);
 });
