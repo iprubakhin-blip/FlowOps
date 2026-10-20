@@ -129,6 +129,76 @@ test('running migrations repeatedly does not change applied versions or task row
   assert.deepEqual((await pool.query('SELECT * FROM tasks ORDER BY id')).rows, beforeTasks.rows);
 });
 
+test('migration 005 adds nullable task details without inventing completion times', async () => {
+  await resetPublicSchema(pool, testUrl);
+  await runMigrations(pool, { directory: writeSubset(['001', '002', '003', '004']) });
+  const admin = await pool.query<{ id: number }>(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('m31a-admin@example.com', 'not-a-real-hash', 'ADMIN') RETURNING id`,
+  );
+  const member = await pool.query<{ id: number }>(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('m31a-member@example.com', 'not-a-real-hash', 'MEMBER') RETURNING id`,
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, title, team, priority, status, owner_id, created_at, updated_at)
+     VALUES
+       (21, 'Open owned', 'QA', 'low', 'todo', $1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+       (22, 'Done unknown', 'QA', 'high', 'done', $1, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+       (23, 'Other user', 'Backend', 'medium', 'todo', $2, '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z')`,
+    [admin.rows[0].id, member.rows[0].id],
+  );
+  const before = await pool.query(
+    'SELECT id, title, team, priority, status, owner_id, created_at, updated_at FROM tasks ORDER BY id',
+  );
+
+  const applied = await runMigrations(pool);
+  assert.equal(applied.some((row) => row.version === '005'), true);
+
+  const columns = await pool.query<{ column_name: string; data_type: string; is_nullable: string }>(
+    `SELECT column_name, data_type, is_nullable
+     FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'tasks'
+       AND column_name IN ('description', 'due_at', 'completed_at')
+     ORDER BY column_name`,
+  );
+  assert.deepEqual(columns.rows, [
+    { column_name: 'completed_at', data_type: 'timestamp with time zone', is_nullable: 'YES' },
+    { column_name: 'description', data_type: 'text', is_nullable: 'YES' },
+    { column_name: 'due_at', data_type: 'date', is_nullable: 'YES' },
+  ]);
+
+  const after = await pool.query(
+    `SELECT id, title, team, priority, status, owner_id, created_at, updated_at,
+            description, due_at, completed_at
+     FROM tasks ORDER BY id`,
+  );
+  assert.deepEqual(
+    after.rows.map(({ description, due_at, completed_at, ...row }) => {
+      void description;
+      void due_at;
+      void completed_at;
+      return row;
+    }),
+    before.rows,
+  );
+  assert.equal(after.rows.every((row) => row.description === null && row.due_at === null && row.completed_at === null), true);
+  assert.equal(after.rows.find((row) => row.id === 22)?.status, 'done');
+
+  await assert.rejects(
+    () => pool.query(
+      `UPDATE tasks SET completed_at = NOW() WHERE id = 21`,
+    ),
+    /tasks_completed_at_status_chk/,
+  );
+
+  const ownerNull = await pool.query(
+    `SELECT is_nullable FROM information_schema.columns
+     WHERE table_name = 'tasks' AND column_name = 'owner_id'`,
+  );
+  assert.equal(ownerNull.rows[0].is_nullable, 'NO');
+});
+
 test('records migration versions and checksums', async () => {
   await resetPublicSchema(pool, testUrl);
   await runMigrations(pool);

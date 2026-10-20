@@ -1,31 +1,67 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isPriority, isStatus, parseCreateTask } from './tasks';
+import { isPriority, isStatus, MAX_DESCRIPTION_LENGTH, parseCreateTask, parsePatchTask } from './tasks';
 
 test('accepts a valid new task and trims its text fields', () => {
   assert.deepEqual(parseCreateTask({ title: '  Fix API errors  ', team: '  Platform ', priority: 'high' }), {
-    title: 'Fix API errors', team: 'Platform', priority: 'high',
+    title: 'Fix API errors',
+    team: 'Platform',
+    priority: 'high',
+    description: null,
+    dueDate: null,
   });
 });
 
-test('ignores client-supplied owner and role fields', () => {
+test('accepts optional description and dueDate on create', () => {
   assert.deepEqual(
     parseCreateTask({
-      title: 'Owned by server',
+      title: 'Ship dates',
       team: 'Backend',
       priority: 'low',
-      ownerId: 99,
-      owner_id: 99,
-      role: 'ADMIN',
+      description: '  notes  ',
+      dueDate: '2026-04-01',
     }),
-    { title: 'Owned by server', team: 'Backend', priority: 'low' },
+    {
+      title: 'Ship dates',
+      team: 'Backend',
+      priority: 'low',
+      description: 'notes',
+      dueDate: '2026-04-01',
+    },
   );
 });
 
-test('rejects missing fields and unsupported priorities', () => {
+test('rejects client-supplied owner, completion and status fields', () => {
+  const base = { title: 'Owned by server', team: 'Backend', priority: 'low' };
+  assert.throws(() => parseCreateTask({ ...base, ownerId: 99 }), /ownerId/);
+  assert.throws(() => parseCreateTask({ ...base, owner_id: 99 }), /owner_id/);
+  assert.throws(() => parseCreateTask({ ...base, role: 'ADMIN' }), /role/);
+  assert.throws(() => parseCreateTask({ ...base, completedAt: '2026-01-01T00:00:00.000Z' }), /completedAt/);
+  assert.throws(() => parseCreateTask({ ...base, status: 'done' }), /status/);
+});
+
+test('rejects missing fields, unsupported priorities and invalid optional fields', () => {
   assert.throws(() => parseCreateTask({ title: 'x', team: 'IT', priority: 'high' }), /Title/);
   assert.throws(() => parseCreateTask({ title: 'Real task', team: 'IT', priority: 'urgent' }), /Priority/);
   assert.throws(() => parseCreateTask(null), /object/);
+  assert.throws(
+    () => parseCreateTask({ title: 'Real task', team: 'IT', priority: 'low', description: 'x'.repeat(MAX_DESCRIPTION_LENGTH + 1) }),
+    /description/,
+  );
+  assert.throws(
+    () => parseCreateTask({ title: 'Real task', team: 'IT', priority: 'low', dueDate: '2026-02-30' }),
+    /calendar/,
+  );
+});
+
+test('parsePatchTask requires at least one editable field and rejects mass assignment', () => {
+  assert.throws(() => parsePatchTask({}), /At least one/);
+  assert.throws(() => parsePatchTask({ ownerId: 1, title: 'Nope' }), /ownerId/);
+  assert.throws(() => parsePatchTask({ status: 'done' }), /status/);
+  assert.throws(() => parsePatchTask({ completedAt: null }), /completedAt/);
+  assert.throws(() => parsePatchTask({ secret: true }), /Unsupported/);
+  assert.deepEqual(parsePatchTask({ description: null, dueDate: null }), { description: null, dueDate: null });
+  assert.deepEqual(parsePatchTask({ title: '  Edited  ' }), { title: 'Edited' });
 });
 
 test('recognizes only allowed task statuses', () => {

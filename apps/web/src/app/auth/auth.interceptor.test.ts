@@ -67,9 +67,11 @@ test('adds the CSRF header to task writes and keeps credentials', () => {
   };
   runInterceptor(new HttpRequest('POST', '/api/tasks', { title: 'Owned by server' }), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
   runInterceptor(new HttpRequest('PATCH', '/api/tasks/12/status', { status: 'done' }), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
+  runInterceptor(new HttpRequest('PATCH', '/api/tasks/12', { title: 'Edited' }), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
   assert.equal(seen[0].withCredentials, true);
   assert.equal(seen[0].headers.get(CSRF_HEADER), CSRF_HEADER_VALUE);
   assert.equal(seen[1].headers.get(CSRF_HEADER), CSRF_HEADER_VALUE);
+  assert.equal(seen[2].headers.get(CSRF_HEADER), CSRF_HEADER_VALUE);
 });
 
 test('does not add the CSRF header to GET /api/tasks', () => {

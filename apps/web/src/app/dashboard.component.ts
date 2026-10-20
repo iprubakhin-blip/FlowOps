@@ -7,6 +7,7 @@ import { Subject } from 'rxjs';
 import { AuthService } from './auth/auth.service';
 import { searchQuery$ } from './search-query';
 import {
+  MAX_DESCRIPTION_LENGTH,
   PAGE_SIZES,
   Priority,
   Status,
@@ -18,11 +19,14 @@ import {
   matchingCaption,
   scopeSubtitle,
   showingLabel,
+  summaryCaption,
   tableScopeHint,
   tasksHeading,
 } from './dashboard.context';
 import { TasksService } from './services/tasks.service';
 import { UserRole } from './models/user';
+import { completionLabel, formatCalendarDate } from './task-dates';
+import { TaskDraft, buildCreateBody, buildEditPatch, taskToDraft } from './task-payloads';
 
 @Component({
   selector: 'app-dashboard',
@@ -37,12 +41,17 @@ export class DashboardComponent {
   private readonly router = inject(Router);
   readonly search = signal('');
   readonly showForm = signal(false);
+  readonly editingId = signal<number | null>(null);
+  readonly expandedId = signal<number | null>(null);
+  readonly formError = signal<string | null>(null);
   readonly pageSizes = PAGE_SIZES;
+  readonly maxDescription = MAX_DESCRIPTION_LENGTH;
+  readonly formatDue = formatCalendarDate;
+  readonly completionLabel = completionLabel;
   private readonly searchInput = new Subject<string>();
 
-  draftTitle = '';
-  draftTeam = 'Frontend';
-  draftPriority: Priority = 'medium';
+  createDraft: TaskDraft = emptyDraft();
+  editDraft: TaskDraft = emptyDraft();
 
   readonly matchingTotal = computed(() => this.store.pagination().total);
   readonly pageItemCount = computed(() => this.store.tasks().length);
@@ -57,8 +66,13 @@ export class DashboardComponent {
   readonly heading = computed(() => tasksHeading(this.role()));
   readonly subtitle = computed(() => scopeSubtitle(this.role()));
   readonly caption = computed(() => matchingCaption(this.role()));
+  readonly statsCaption = computed(() => summaryCaption(this.role()));
   readonly tableHint = computed(() => tableScopeHint(this.role()));
   readonly footerLabel = computed(() => showingLabel(this.role(), this.pageItemCount(), this.matchingTotal()));
+  readonly editingTask = computed(() => {
+    const id = this.editingId();
+    return id === null ? null : this.store.tasks().find((task) => task.id === id) ?? null;
+  });
 
   readonly statuses: { id: Status; label: string }[] = [
     { id: 'todo', label: 'To do' },
@@ -69,6 +83,7 @@ export class DashboardComponent {
   readonly sortFields: { id: TaskSortBy; label: string }[] = [
     { id: 'createdAt', label: 'Created' },
     { id: 'updatedAt', label: 'Updated' },
+    { id: 'dueDate', label: 'Due date' },
     { id: 'title', label: 'Title' },
     { id: 'team', label: 'Team' },
     { id: 'priority', label: 'Priority' },
@@ -81,6 +96,7 @@ export class DashboardComponent {
       this.store.patchQuery({ search });
     });
     this.store.reload();
+    this.store.reloadSummary();
   }
 
   onSearch(value: string): void {
@@ -134,14 +150,54 @@ export class DashboardComponent {
     }
   }
 
+  toggleDetails(id: number): void {
+    this.expandedId.update((current) => (current === id ? null : id));
+  }
+
+  openEdit(task: Task): void {
+    this.editingId.set(task.id);
+    this.editDraft = taskToDraft(task);
+    this.formError.set(null);
+    this.showForm.set(false);
+  }
+
+  cancelEdit(): void {
+    this.editingId.set(null);
+    this.editDraft = emptyDraft();
+  }
+
   saveTask(): void {
-    const title = this.draftTitle.trim();
-    const team = this.draftTeam.trim();
-    if (title.length < 3 || team.length < 2) return;
-    this.store.create({ title, team, priority: this.draftPriority }, () => {
-      this.draftTitle = '';
+    if (this.store.saving()) return;
+    const result = buildCreateBody(this.createDraft);
+    if ('error' in result) {
+      this.formError.set(result.error);
+      return;
+    }
+    this.formError.set(null);
+    this.store.create(result, () => {
+      this.createDraft = emptyDraft();
       this.showForm.set(false);
     });
+  }
+
+  saveEdit(): void {
+    if (this.store.saving()) return;
+    const task = this.editingTask();
+    if (!task) {
+      this.formError.set('That task is no longer available.');
+      return;
+    }
+    const result = buildEditPatch(task, this.editDraft);
+    if ('error' in result) {
+      this.formError.set(result.error);
+      return;
+    }
+    if ('empty' in result) {
+      this.cancelEdit();
+      return;
+    }
+    this.formError.set(null);
+    this.store.update(task.id, result, () => this.cancelEdit());
   }
 
   logout(): void {
@@ -150,4 +206,8 @@ export class DashboardComponent {
       next: () => void this.router.navigateByUrl('/login'),
     });
   }
+}
+
+function emptyDraft(): TaskDraft {
+  return { title: '', team: 'Frontend', priority: 'medium', description: '', dueDate: '' };
 }

@@ -26,26 +26,93 @@
       </div>
     </header>
     <div class="content">
-      <div class="heading-row"><div><div class="eyebrow">TEAM OPERATIONS</div><h1>Work overview<span class="h1-dot">.</span></h1><p class="subtitle">{{ subtitle() }}</p></div><button class="primary-button" type="button" (click)="showForm.set(!showForm())"><span>＋</span> {{ showForm() ? 'Close form' : 'New task' }}</button></div>
+      <div class="heading-row"><div><div class="eyebrow">TEAM OPERATIONS</div><h1>Work overview<span class="h1-dot">.</span></h1><p class="subtitle">{{ subtitle() }}</p></div><button class="primary-button" type="button" (click)="showForm.set(!showForm()); formError.set(null)"><span>＋</span> {{ showForm() ? 'Close form' : 'New task' }}</button></div>
 
-      <section class="stats-grid" aria-label="Task metrics">
-        <div class="stat-card"><div class="stat-top"><span>Matching tasks</span><span class="stat-symbol purple">▦</span></div><strong>{{ matchingTotal() }}</strong><div class="stat-bottom">{{ caption() }}</div></div>
-        <div class="stat-card"><div class="stat-top"><span>This page</span><span class="stat-symbol blue">☷</span></div><strong>{{ pageItemCount() }}</strong><div class="stat-bottom">Rows loaded from the API</div></div>
-        <div class="stat-card"><div class="stat-top"><span>Page</span><span class="stat-symbol orange">#</span></div><strong>{{ currentPage() }}<small>/{{ totalPages() }}</small></strong><div class="stat-bottom">Current page of matching tasks</div></div>
-        <div class="stat-card"><div class="stat-top"><span>Page size</span><span class="stat-symbol green">☰</span></div><strong>{{ store.query().limit }}</strong><div class="stat-bottom">Maximum {{ pageSizes[pageSizes.length - 1] }} rows per request</div></div>
+      <section class="stats-grid stats-summary" aria-label="Authorized task statistics">
+        <div class="stat-card">
+          <div class="stat-top"><span>Total tasks</span><span class="stat-symbol purple">▦</span></div>
+          <strong>{{ store.summaryLoading() ? '—' : store.summary().total }}</strong>
+          <div class="stat-bottom">{{ statsCaption() }}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-top"><span>To do</span><span class="stat-symbol blue">○</span></div>
+          <strong>{{ store.summaryLoading() ? '—' : store.summary().todo }}</strong>
+          <div class="stat-bottom">Status = to do</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-top"><span>In progress</span><span class="stat-symbol orange">◑</span></div>
+          <strong>{{ store.summaryLoading() ? '—' : store.summary().inProgress }}</strong>
+          <div class="stat-bottom">Status = in progress</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-top"><span>Done</span><span class="stat-symbol green">✓</span></div>
+          <strong>{{ store.summaryLoading() ? '—' : store.summary().done }}</strong>
+          <div class="stat-bottom">Status = done</div>
+        </div>
+        <div class="stat-card" [class.stat-alert]="store.summary().overdue > 0">
+          <div class="stat-top"><span>Overdue</span><span class="stat-symbol red">!</span></div>
+          <strong>{{ store.summaryLoading() ? '—' : store.summary().overdue }}</strong>
+          <div class="stat-bottom">Unfinished, due before today UTC</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-top"><span>High priority open</span><span class="stat-symbol orange">▲</span></div>
+          <strong>{{ store.summaryLoading() ? '—' : store.summary().highPriorityOpen }}</strong>
+          <div class="stat-bottom">High priority and not done</div>
+        </div>
+      </section>
+      @if (store.summaryError()) {
+        <div class="alert" role="alert">{{ store.summaryError() }} <button type="button" (click)="store.reloadSummary()">Retry statistics</button></div>
+      }
+
+      <section class="stats-grid stats-page" aria-label="Current list query">
+        <div class="stat-card compact">
+          <div class="stat-top"><span>Matching tasks</span></div>
+          <strong>{{ matchingTotal() }}</strong>
+          <div class="stat-bottom">{{ caption() }}</div>
+        </div>
+        <div class="stat-card compact">
+          <div class="stat-top"><span>This page</span></div>
+          <strong>{{ pageItemCount() }}</strong>
+          <div class="stat-bottom">Rows on the current page</div>
+        </div>
+        <div class="stat-card compact">
+          <div class="stat-top"><span>Page</span></div>
+          <strong>{{ currentPage() }}<small>/{{ totalPages() }}</small></strong>
+          <div class="stat-bottom">Does not change the statistics above</div>
+        </div>
       </section>
 
       @if (auth.error()) { <div class="alert" role="alert">{{ auth.error() }}</div> }
-      @if (store.error()) { <div class="alert" role="alert">{{ store.error() }} <button type="button" (click)="store.reload()">Retry</button></div> }
+      @if (store.error()) { <div class="alert" role="alert">{{ store.error() }} <button type="button" (click)="store.reload()">Retry list</button></div> }
+      @if (formError()) { <div class="alert" role="alert">{{ formError() }}</div> }
 
       @if (showForm()) {
         <section class="panel create-panel" aria-label="Create a task">
-          <div class="panel-heading"><h2>Create a new task</h2><p>The API assigns ownership to your signed-in account.</p></div>
+          <div class="panel-heading"><h2>Create a new task</h2><p>Optional description and due date. Ownership is assigned by the API.</p></div>
           <form (ngSubmit)="saveTask()" #taskForm="ngForm">
-            <label class="form-field wide">Task title<input name="title" [(ngModel)]="draftTitle" required minlength="3" maxlength="120" placeholder="e.g. Build metrics endpoint" /></label>
-            <label class="form-field">Team<input name="team" [(ngModel)]="draftTeam" required minlength="2" maxlength="60" /></label>
-            <label class="form-field">Priority<select name="priority" [(ngModel)]="draftPriority"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+            <label class="form-field wide">Task title<input name="title" [(ngModel)]="createDraft.title" required minlength="3" maxlength="120" placeholder="e.g. Build metrics endpoint" /></label>
+            <label class="form-field">Team<input name="team" [(ngModel)]="createDraft.team" required minlength="2" maxlength="60" /></label>
+            <label class="form-field">Priority<select name="priority" [(ngModel)]="createDraft.priority"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+            <label class="form-field">Due date<input name="dueDate" type="date" [(ngModel)]="createDraft.dueDate" /></label>
+            <label class="form-field full">Description<textarea name="description" rows="3" [(ngModel)]="createDraft.description" [maxlength]="maxDescription" placeholder="Optional notes (plain text)"></textarea></label>
             <button class="primary-button submit-button" type="submit" [disabled]="!taskForm.valid || store.saving()">{{ store.saving() ? 'Saving…' : 'Create task' }}</button>
+          </form>
+        </section>
+      }
+
+      @if (editingTask(); as editTask) {
+        <section class="panel create-panel" role="dialog" aria-label="Edit task">
+          <div class="panel-heading"><h2>Edit OPS-{{ editTask.id }}</h2><p>Status stays on the row control. Clearing description or due date sends null.</p></div>
+          <form (ngSubmit)="saveEdit()" #editForm="ngForm">
+            <label class="form-field wide">Task title<input name="editTitle" [(ngModel)]="editDraft.title" required minlength="3" maxlength="120" /></label>
+            <label class="form-field">Team<input name="editTeam" [(ngModel)]="editDraft.team" required minlength="2" maxlength="60" /></label>
+            <label class="form-field">Priority<select name="editPriority" [(ngModel)]="editDraft.priority"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+            <label class="form-field">Due date<input name="editDueDate" type="date" [(ngModel)]="editDraft.dueDate" /></label>
+            <label class="form-field full">Description<textarea name="editDescription" rows="3" [(ngModel)]="editDraft.description" [maxlength]="maxDescription"></textarea></label>
+            <div class="form-actions">
+              <button class="primary-button submit-button" type="submit" [disabled]="!editForm.valid || store.saving()">{{ store.saving() ? 'Saving…' : 'Save changes' }}</button>
+              <button class="ghost-button" type="button" [disabled]="store.saving()" (click)="cancelEdit()">Cancel</button>
+            </div>
           </form>
         </section>
       }
@@ -82,15 +149,37 @@
                 <th><button type="button" class="sort-button" (click)="toggleSort('team')">Team{{ sortIndicator('team') }}</button></th>
                 <th><button type="button" class="sort-button" (click)="toggleSort('priority')">Priority{{ sortIndicator('priority') }}</button></th>
                 <th><button type="button" class="sort-button" (click)="toggleSort('status')">Status{{ sortIndicator('status') }}</button></th>
+                <th><button type="button" class="sort-button" (click)="toggleSort('dueDate')">Due{{ sortIndicator('dueDate') }}</button></th>
                 <th><button type="button" class="sort-button" (click)="toggleSort('createdAt')">Created{{ sortIndicator('createdAt') }}</button></th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               @for (task of store.tasks(); track task.id) {
-                <tr>
+                <tr [class.row-overdue]="task.isOverdue">
                   <td>
-                    <div class="task-title"><span class="task-checkbox" [class.checked]="task.status === 'done'">{{ task.status === 'done' ? '✓' : '' }}</span><span>{{ task.title }}</span></div>
+                    <div class="task-title">
+                      <span class="task-checkbox" [class.checked]="task.status === 'done'">{{ task.status === 'done' ? '✓' : '' }}</span>
+                      <span>{{ task.title }}</span>
+                      @if (task.isOverdue) { <span class="overdue-pill">Overdue</span> }
+                    </div>
                     <small class="task-id">OPS-{{ task.id }}</small>
+                    @if (task.description) {
+                      <button type="button" class="detail-toggle" (click)="toggleDetails(task.id)">{{ expandedId() === task.id ? 'Hide details' : 'Details' }}</button>
+                    }
+                    @if (expandedId() === task.id) {
+                      <p class="task-description">{{ task.description || 'No description.' }}</p>
+                      @if (completionLabel(task.status, task.completedAt); as doneLabel) {
+                        <p class="task-completed">
+                          @if (task.completedAt) { Completed {{ task.completedAt | date:'MMM d, y, HH:mm' }} }
+                          @else { {{ doneLabel }} }
+                        </p>
+                      }
+                    } @else if (task.status === 'done' && !task.completedAt) {
+                      <p class="task-completed">Completion time unavailable</p>
+                    } @else if (task.completedAt) {
+                      <p class="task-completed">Completed {{ task.completedAt | date:'MMM d, y, HH:mm' }}</p>
+                    }
                   </td>
                   <td><span class="team-avatar">{{ task.team.charAt(0).toUpperCase() }}</span> {{ task.team }}</td>
                   <td><span class="priority" [class.high]="task.priority === 'high'" [class.medium]="task.priority === 'medium'" [class.low]="task.priority === 'low'"><span class="priority-dot"></span>{{ task.priority | titlecase }}</span></td>
@@ -99,11 +188,13 @@
                       @for (status of statuses; track status.id) { <option [value]="status.id">{{ status.label }}</option> }
                     </select>
                   </td>
+                  <td class="date-cell">{{ task.dueDate ? formatDue(task.dueDate) : '—' }}</td>
                   <td class="date-cell">{{ task.createdAt | date:'MMM d, y' }}</td>
+                  <td><button type="button" class="row-edit" (click)="openEdit(task)">Edit</button></td>
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="5" class="empty-state">
+                  <td colspan="7" class="empty-state">
                     @if (store.loading()) { Loading tasks… }
                     @else if (store.error()) { Could not load tasks. <button type="button" class="inline-retry" (click)="store.reload()">Retry</button> }
                     @else { No tasks match these filters. }
