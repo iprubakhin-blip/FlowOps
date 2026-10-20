@@ -1,6 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
 import { EMPTY, Subject, catchError, finalize, switchMap, take } from 'rxjs';
+import { bulkCreateErrorMessage } from '../ai/ai.errors';
 import { taskLoadErrorMessage, taskWriteErrorMessage } from '../auth/auth.errors';
 import {
   DEFAULT_TASK_QUERY,
@@ -14,6 +15,7 @@ import {
   TaskListQuery,
   TaskSummary,
 } from '../models/task';
+import type { BulkCreateRequest, BulkCreateResponse } from '../ai/ai.models';
 
 const RESET_PAGE_KEYS = ['limit', 'status', 'priority', 'search', 'sortBy', 'sortOrder'] as const;
 
@@ -119,6 +121,30 @@ export class TasksService {
           onSuccess();
         },
         error: (error: unknown) => this.error.set(taskWriteErrorMessage(error)),
+      });
+  }
+
+  createBulk(
+    payload: BulkCreateRequest,
+    onSuccess: (createdCount: number) => void,
+    onError?: (error: unknown) => void,
+  ): void {
+    if (this.saving()) return;
+    this.saving.set(true);
+    this.error.set(null);
+    this.http.post<BulkCreateResponse>(`${this.endpoint}/bulk`, payload)
+      .pipe(take(1), finalize(() => this.saving.set(false)))
+      .subscribe({
+        next: (result) => {
+          this.query.set({ ...this.query(), page: 1 });
+          this.reload();
+          this.reloadSummary();
+          onSuccess(result.createdCount);
+        },
+        error: (error: unknown) => {
+          this.error.set(bulkCreateErrorMessage(error));
+          onError?.(error);
+        },
       });
   }
 

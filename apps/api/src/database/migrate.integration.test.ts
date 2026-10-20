@@ -59,7 +59,7 @@ test('migrates a fresh database', async () => {
   const applied = await runMigrations(pool);
   assert.deepEqual(applied.map((row) => row.version), files.map((file) => file.version));
   const tables = await tableNames();
-  assert.deepEqual(tables, ['refresh_sessions', 'schema_migrations', 'tasks', 'users']);
+  assert.deepEqual(tables, ['ai_request_quotas', 'refresh_sessions', 'schema_migrations', 'tasks', 'users']);
 });
 
 function writeSubset(versions: string[]): string {
@@ -197,6 +197,25 @@ test('migration 005 adds nullable task details without inventing completion time
      WHERE table_name = 'tasks' AND column_name = 'owner_id'`,
   );
   assert.equal(ownerNull.rows[0].is_nullable, 'NO');
+});
+
+test('migration 006 adds per-user UTC quota rows without touching tasks', async () => {
+  await resetPublicSchema(pool, testUrl);
+  await runMigrations(pool);
+  await pool.query(
+    `INSERT INTO users (email, password_hash, role) VALUES ('quota@example.com', 'not-a-real-hash', 'MEMBER')`,
+  );
+  await pool.query(
+    `INSERT INTO ai_request_quotas (user_id, usage_date, request_count) VALUES (1, '2026-10-20', 1)`,
+  );
+  await assert.rejects(
+    () => pool.query(
+      `INSERT INTO ai_request_quotas (user_id, usage_date, request_count) VALUES (1, '2026-10-20', 2)`,
+    ),
+    /duplicate key|unique/i,
+  );
+  const tasks = await pool.query('SELECT count(*)::int AS count FROM tasks');
+  assert.equal(tasks.rows[0].count, 0);
 });
 
 test('records migration versions and checksums', async () => {

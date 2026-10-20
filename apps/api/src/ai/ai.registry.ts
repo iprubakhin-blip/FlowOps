@@ -1,5 +1,7 @@
 import { ILLUSTRATIVE_NOTE_SCHEMA, type IllustrativeNote } from './ai.fixtures';
 import type { JsonSchema } from './ai.schema';
+import { TASK_DRAFT_RUNTIME_SCHEMA } from './task-draft.schema';
+import { TASK_DRAFT_SCHEMA_NAME, type TaskDraftModelOutput } from './task-draft.types';
 
 export interface RegisteredAiSchema<T = unknown> {
   name: string;
@@ -35,6 +37,8 @@ export function toOpenAiJsonSchema(schema: JsonSchema): Record<string, unknown> 
       if (schema.maxLength !== undefined) node.maxLength = schema.maxLength;
       return node;
     }
+    case 'nullish-string':
+      return { type: ['string', 'null'] };
     case 'number':
       return { type: 'number' };
     case 'boolean':
@@ -81,4 +85,12 @@ registerAiSchema({
   providerJsonSchema: toOpenAiJsonSchema(ILLUSTRATIVE_NOTE_SCHEMA),
   runtimeSchema: ILLUSTRATIVE_NOTE_SCHEMA,
   resultType: undefined as unknown as IllustrativeNote,
+});
+
+registerAiSchema({
+  name: TASK_DRAFT_SCHEMA_NAME,
+  providerFormatName: providerFormatName(TASK_DRAFT_SCHEMA_NAME),
+  providerJsonSchema: toOpenAiJsonSchema(TASK_DRAFT_RUNTIME_SCHEMA),
+  runtimeSchema: TASK_DRAFT_RUNTIME_SCHEMA,
+  resultType: undefined as unknown as TaskDraftModelOutput,
 });

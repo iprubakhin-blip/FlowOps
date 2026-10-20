@@ -39,7 +39,9 @@
 - [x] **M3.2-A** AI foundation: provider interface, mock provider, runtime structured validation, disabled-by-default config. No real LLM calls, no public AI endpoints, no Angular changes.
 - [x] **M3.2-B** OpenAI Responses API adapter, strict Structured Outputs registry, usage mapping, estimated cost catalog, conservative request limits, opt-in `npm run ai:smoke`. No public AI endpoints, no Angular, no live paid verification in this milestone.
 - [x] **M3.2-C** Offline AI integration QA: schema contract alignment, usage/cost edge cases, smoke contact tracking, Node 22 engine pin. Live OpenAI remains UNVERIFIED. No public AI endpoints.
-- [ ] **M3.3** AI requirements → tasks (authenticated feature workflow, consent, durable quota before paid calls)
+- [x] **M3.3-A** Backend task drafts: `POST /api/ai/task-drafts`, schema `task.drafts.v1`, request-level external consent, PostgreSQL daily quota (`006_ai_request_quotas.sql`). Drafts are not persisted. No Angular.
+- [x] **M3.3-B** Angular Generate Tasks with AI panel, `GET /api/ai/capabilities`, editable draft preview, confirmed `POST /api/tasks/bulk` in one PostgreSQL transaction. Mock output is not live LLM inference. Live OpenAI remains UNVERIFIED.
+- [x] **M3.3-C** Isolated real-browser QA (`flowops_test_m33c`, `127.0.0.1:4310` / `3010`, `AI_PROVIDER=mock`). Generate is click-gated; drafts persist only after **Create Tasks**. Bulk is transactional and not exactly-once. Live OpenAI remains UNVERIFIED.
 - [ ] **M3.4** AI project intelligence
 - [ ] **M3.5** Portfolio release
 

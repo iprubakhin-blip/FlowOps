@@ -15,6 +15,6 @@ test('safeguards are conservative and do not claim a durable in-memory budget', 
   });
   assert.equal(described.retries, 0);
   assert.equal(described.fanOut, 0);
-  assert.equal(described.dailyLimitStorage, 'config-only');
+  assert.equal(described.dailyLimitStorage, 'postgresql');
   assert.equal(clampOutputTokens(9999, 1024), 1024);
 });

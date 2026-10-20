@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isPriority, isStatus, MAX_DESCRIPTION_LENGTH, parseCreateTask, parsePatchTask } from './tasks';
+import { isPriority, isStatus, MAX_DESCRIPTION_LENGTH, parseBulkCreate, parseCreateTask, parsePatchTask } from './tasks';
 
 test('accepts a valid new task and trims its text fields', () => {
   assert.deepEqual(parseCreateTask({ title: '  Fix API errors  ', team: '  Platform ', priority: 'high' }), {
@@ -51,6 +51,48 @@ test('rejects missing fields, unsupported priorities and invalid optional fields
   assert.throws(
     () => parseCreateTask({ title: 'Real task', team: 'IT', priority: 'low', dueDate: '2026-02-30' }),
     /calendar/,
+  );
+});
+
+test('parseBulkCreate stamps the request team and rejects forged persistence fields', () => {
+  const tasks = parseBulkCreate({
+    team: 'Platform',
+    tasks: [
+      { title: 'First task here', description: 'notes', priority: 'high', dueDate: null },
+      { title: 'Second task here', priority: 'low' },
+    ],
+  });
+  assert.equal(tasks.length, 2);
+  assert.equal(tasks[0].team, 'Platform');
+  assert.equal(tasks[1].dueDate, null);
+  assert.equal(tasks[1].description, null);
+  assert.throws(() => parseBulkCreate({ team: 'Platform', tasks: [] }), /between/);
+  assert.throws(
+    () => parseBulkCreate({
+      team: 'Platform',
+      tasks: Array.from({ length: 11 }, (_, index) => ({ title: `Task title ${index + 1}xx`, priority: 'low' })),
+    }),
+    /between/,
+  );
+  assert.throws(
+    () => parseBulkCreate({ team: 'Platform', ownerId: 9, tasks: [{ title: 'Valid title here', priority: 'low' }] }),
+    /ownerId/,
+  );
+  assert.throws(
+    () => parseBulkCreate({ team: 'Platform', tasks: [{ title: 'Valid title here', priority: 'low', status: 'done' }] }),
+    /status/,
+  );
+  assert.throws(
+    () => parseBulkCreate({ team: 'Platform', tasks: [{ title: 'Valid title here', priority: 'low', completedAt: null }] }),
+    /completedAt/,
+  );
+  assert.throws(
+    () => parseBulkCreate({ team: 'Platform', tasks: [{ title: 'Valid title here', priority: 'low', id: 4 }] }),
+    /id/,
+  );
+  assert.throws(
+    () => parseBulkCreate({ team: 'Platform', tasks: [{ title: 'Valid title here', priority: 'low', team: 'Other' }] }),
+    /team/,
   );
 });
 

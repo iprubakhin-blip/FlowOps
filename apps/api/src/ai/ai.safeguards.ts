@@ -7,7 +7,7 @@ export interface AiSafeguards {
   maxRequestsPerUserDay: number;
   retries: 0;
   fanOut: 0;
-  dailyLimitStorage: 'config-only';
+  dailyLimitStorage: 'postgresql';
   notes: string[];
 }
 
@@ -19,10 +19,10 @@ export function describeAiSafeguards(config: AiConfig): AiSafeguards {
     maxRequestsPerUserDay: config.maxRequestsPerUserDay,
     retries: 0,
     fanOut: 0,
-    dailyLimitStorage: 'config-only',
+    dailyLimitStorage: 'postgresql',
     notes: [
       'max_output_tokens and estimated USD are not a guaranteed spending cap.',
-      'AI_MAX_REQUESTS_PER_USER_DAY is configuration for a future durable counter. It is not enforced in memory and is not multi-instance safe.',
+      'AI_MAX_REQUESTS_PER_USER_DAY is enforced per authenticated user per UTC date in PostgreSQL. Failed provider attempts still consume a slot. This is not a dollar cap.',
       'Unknown model prices make cost estimates unavailable rather than inventing a number.',
     ],
   };

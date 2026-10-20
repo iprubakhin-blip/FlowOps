@@ -23,6 +23,6 @@ export function createConfiguredProvider(): AiProvider {
     { provide: AI_PROVIDER, useFactory: createConfiguredProvider },
     AiService,
   ],
-  exports: [AiService],
+  exports: [AiService, AI_PROVIDER],
 })
 export class AiModule {}

@@ -218,6 +218,33 @@ test('create without optional fields remains compatible', () => {
   assert.deepEqual(posted, { title: 'Legacy create', team: 'QA', priority: 'low' });
 });
 
+test('bulk create posts allowed fields then refreshes list and summary', () => {
+  const requests: string[] = [];
+  let posted: unknown;
+  const http = {
+    get: (url: string) => {
+      requests.push(isSummaryUrl(url) ? 'GET summary' : 'GET list');
+      if (isSummaryUrl(url)) return of(summaryA);
+      return of(page([taskB], { page: 1, total: 2, totalPages: 1 }));
+    },
+    post: (url: string, body: unknown) => {
+      posted = body;
+      requests.push(url);
+      return of({ items: [taskB], createdCount: 1 });
+    },
+  };
+  const store = createService(http);
+  let saved = 0;
+  store.createBulk({
+    team: 'Platform',
+    tasks: [{ title: 'Bulk one', description: 'notes', priority: 'high', dueDate: null }],
+  }, (count) => { saved = count; });
+  assert.equal(posted && typeof posted === 'object' && 'ownerId' in posted, false);
+  assert.equal(saved, 1);
+  assert.equal(requests.includes('/api/tasks/bulk'), true);
+  assert.equal(store.query().page, 1);
+});
+
 test('duplicate create submits are ignored while saving', () => {
   let posts = 0;
   const pending = new Subject<Task>();

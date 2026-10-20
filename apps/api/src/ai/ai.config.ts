@@ -14,7 +14,7 @@ export interface AiConfig {
   maxInputChars: number;
   maxOutputTokens: number;
   requestTimeoutMs: number;
-  /** Configured ceiling for a future durable counter. Not enforced in-process. */
+  /** Per authenticated user per UTC date. Enforced in PostgreSQL, not a dollar cap. */
   maxRequestsPerUserDay: number;
 }
 

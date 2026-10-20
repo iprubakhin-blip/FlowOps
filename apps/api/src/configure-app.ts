@@ -10,7 +10,7 @@ export function configureApp(app: INestApplication): void {
   app.use(cookieParser());
   app.use((req: { path?: string }, res: { setHeader: (name: string, value: string) => void }, next: () => void) => {
     const path = req.path ?? '';
-    if (path.includes('/auth') || path.includes('/tasks')) {
+    if (path.includes('/auth') || path.includes('/tasks') || path.includes('/ai')) {
       res.setHeader('Cache-Control', 'no-store');
     }
     next();
