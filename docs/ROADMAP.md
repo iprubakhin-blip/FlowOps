@@ -36,8 +36,10 @@
 - [x] **M3.1-A** Task domain extensions (backend/database): migration `005_extend_task_details.sql` (`description`, `due_at`, `completed_at`); UTC calendar due dates; server-owned `completedAt`; `isOverdue`; `PATCH /api/tasks/:id`; `GET /api/tasks/summary` (authorized scope, not the current page).
 - [x] **M3.1-B** Angular task details, edit, due dates, overdue display, create optional fields, and summary KPIs. No AI.
 - [x] **M3.1-C** Final integration and isolated browser QA (`flowops_test_m31c`, `127.0.0.1:4310`). MEMBER isolation, ADMIN cross-user, due dates/completion, summary KPIs, responsive 375/768/1280. No AI.
-- [ ] **M3.2** AI infrastructure
-- [ ] **M3.3** AI requirements → tasks
+- [x] **M3.2-A** AI foundation: provider interface, mock provider, runtime structured validation, disabled-by-default config. No real LLM calls, no public AI endpoints, no Angular changes.
+- [x] **M3.2-B** OpenAI Responses API adapter, strict Structured Outputs registry, usage mapping, estimated cost catalog, conservative request limits, opt-in `npm run ai:smoke`. No public AI endpoints, no Angular, no live paid verification in this milestone.
+- [x] **M3.2-C** Offline AI integration QA: schema contract alignment, usage/cost edge cases, smoke contact tracking, Node 22 engine pin. Live OpenAI remains UNVERIFIED. No public AI endpoints.
+- [ ] **M3.3** AI requirements → tasks (authenticated feature workflow, consent, durable quota before paid calls)
 - [ ] **M3.4** AI project intelligence
 - [ ] **M3.5** Portfolio release
 

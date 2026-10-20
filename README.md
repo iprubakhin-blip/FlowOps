@@ -37,7 +37,7 @@ The frontend development server proxies `/api` requests to the backend. Frontend
 
 ## Run locally (Windows / macOS / Linux)
 
-Requirements: Node.js 22 LTS (or >=20.19), npm, Docker Desktop (or Docker Engine). A working internet connection is required for the initial `npm install`.
+Requirements: Node.js 22 (`engines.node` `>=22.0.0`; GitHub Actions uses 22). npm, Docker Desktop (or Docker Engine). A working internet connection is required for the initial `npm install`. The OpenAI SDK used by the API declares `node>=22`.
 
 Run from the **repository root**:
 
@@ -70,7 +70,7 @@ npm run test:integration
 npm run build
 ```
 
-`npm run test` runs API domain/auth unit tests and Angular service/query tests (Node.js `node:test` via `tsx`). `npm run test:integration` runs Nest tests against isolated databases (`flowops_test`, `flowops_test_migrate`, `flowops_test_auth`, `flowops_test_auth_rl`). Those suites never drop, truncate, or migrate-reset `flowops`. Postgres must be running (`docker compose up -d`). GitHub Actions runs both suites. The production build compiles API and web. There are no browser E2E tests in CI. M2.2-B protects the dashboard route and sends CSRF headers on task writes. A local ADMIN browser pass at `http://127.0.0.1:4300` covered the development instance. **M3.1-C** MEMBER/ADMIN/responsive QA used an isolated instance (`flowops_test_m31c`, SPA `http://127.0.0.1:4310` proxying `/api` to port 3010). The development `flowops` database was not reset. Cross-tab refresh can still sign both tabs out. Forced access-token expiry was not re-walked in M3.1-C.
+`npm run test` runs API domain/auth/AI unit tests and Angular service/query tests (Node.js `node:test` via `tsx`). `npm run test:integration` runs Nest tests against isolated databases (`flowops_test`, `flowops_test_migrate`, `flowops_test_auth`, `flowops_test_auth_rl`). Those suites never drop, truncate, or migrate-reset `flowops`. Postgres must be running (`docker compose up -d`). GitHub Actions runs both suites. The production build compiles API and web. There are no browser E2E tests in CI. M2.2-B protects the dashboard route and sends CSRF headers on task writes. A local ADMIN browser pass at `http://127.0.0.1:4300` covered the development instance. **M3.1-C** MEMBER/ADMIN/responsive QA used an isolated instance (`flowops_test_m31c`, SPA `http://127.0.0.1:4310` proxying `/api` to port 3010). The development `flowops` database was not reset. Cross-tab refresh can still sign both tabs out. Forced access-token expiry was not re-walked in M3.1-C.
 
 ### Database migrations
 
@@ -142,6 +142,15 @@ Angular has a login page at **`/login`**. Serve the SPA at **http://127.0.0.1:43
 | `AUTH_ACCESS_TTL_SECONDS` | Isolated non-production only. Shortens access JWT and `flowops_at` maxAge. Production always uses 15 minutes. |
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | Optional first ADMIN. Set **both** or neither. Applied only when `users` is empty. Does not reset an existing password. |
 | `TASK_LEGACY_OWNER_EMAIL` | Existing ADMIN email used to own unowned legacy tasks when more than one ADMIN exists. Not used to create or promote users. |
+| `AI_ENABLED` | `true`/`false`. Default **false**. When false, `AiService` never calls a provider and no OpenAI client is constructed. |
+| `AI_PROVIDER` | `mock` (default) or `openai`. Other values refuse to start. |
+| `AI_MODEL` | Model id sent to OpenAI. Default `gpt-5.4-mini`. |
+| `OPENAI_API_KEY` | Server-only. Required when `AI_ENABLED=true` and `AI_PROVIDER=openai`. Never sent to Angular. |
+| `AI_MAX_INPUT_CHARS` | Max characters for system instruction and for user input (each). Default `8000`. |
+| `AI_MAX_OUTPUT_TOKENS` | Ceiling passed to the provider. Default `1024`. Callers cannot raise it. Not a billing cap. |
+| `AI_REQUEST_TIMEOUT_MS` | Abort timeout for provider calls. Default `15000`. |
+| `AI_MAX_REQUESTS_PER_USER_DAY` | Stored config only. Default `20`. **Not enforced.** No per-user counter, no durable quota, no monetary cap. M3.3/M3.4 must enforce a real quota before any authenticated paid endpoint. |
+| `AI_LIVE_SMOKE` | Must be `true` plus eligible credentials to run `npm run ai:smoke`. Not used by `npm test` or CI. |
 
 Provision the first admin: put a strong password in `.env` (not in git), start the API once, then remove the bootstrap variables if you want. Logs never include the password or hash.
 
@@ -277,13 +286,55 @@ curl http://localhost:3000/api/tasks/summary \
 
 Before applying **005** to a long-lived local `flowops` volume, dump it (`pg_dump` into gitignored `backups/`). The migration only adds nullable columns and a CHECK; it does not truncate tasks, users, or sessions. Isolated tests never touch `flowops`.
 
+### AI infrastructure (M3.2-A / M3.2-B / M3.2-C)
+
+M3.2-C is an offline QA pass over the AI module. **There are still no public `/api/ai/*` routes, no task-draft generation, no project insights, and no Angular AI UI.** This is infrastructure, not a user-facing copilot. Live OpenAI connectivity is **UNVERIFIED** (no paid request has been made; regional/account eligibility plus explicit approval are required first). A passing mocked test is not live proof.
+
+Runtime: **Node.js 22** (CI `node-version: '22'`; `openai@7.39` engines `>=22`). Root `engines.node` is `>=22.0.0`.
+
+| Piece | Role |
+|---|---|
+| `AiProvider` | Completes a request and returns **untrusted** `rawText` plus usage metadata. Mock ignores provider JSON Schema; OpenAI requires a registered schema and never falls back to unconstrained text. |
+| `MockAiProvider` | In-process fixtures only. No HTTP, no API keys, no paid calls. `usageAvailable` is always false. |
+| `OpenAiProvider` | Official `openai` SDK, `responses.create`, `store: false`, `maxRetries: 0`, no tools, no streaming, no background mode. API key stays on the server. The SDK client is constructed only when OpenAI mode is selected and a call is made. |
+| Schema registry | `illustrative.note` → `illustrative_note`. Provider JSON Schema is strict (`additionalProperties: false`, every property required, including `notes` as an array that may be empty). Local validation uses the same required set so a provider-accepted object always validates locally. Not a task/report product schema. |
+| `AiService.generateStructured` | Disabled-by-default gate, input/output limits, timeout/cancel, registry lookup, then JSON-parse + local validation. Does not touch PostgreSQL or `TasksRepository`. Provider schema constraints do not replace local validation. |
+| Cost catalog | Version `2026-10-20`. GPT-5.4 Mini Standard: **$0.75 / $0.075 cached / $4.50 per 1M tokens** from [OpenAI API pricing](https://developers.openai.com/api/docs/pricing). Amounts are **estimated**, not invoices. Unknown models return `cost.status: 'unavailable'`. |
+
+**Provider selection:** `AI_ENABLED=false` (default) → `MockAiProvider`, zero external requests, no key required. `AI_PROVIDER=mock` → mock. `AI_PROVIDER=openai` with AI enabled and a key → `OpenAiProvider`. Missing key fails closed. Failed OpenAI calls never fall back to mock text. Unsupported providers refuse to start.
+
+**Usage:** OpenAI maps `input_tokens`, `output_tokens`, `total_tokens`, and `input_tokens_details.cached_tokens` when present. Missing usage is `usageAvailable: false` with null counts — not a zero-cost success. A thrown error is not recorded as a free request.
+
+**Safeguards (what is actually implemented):**
+
+| Control | Status |
+|---|---|
+| Input character limit | Implemented (`AI_MAX_INPUT_CHARS`) |
+| Output token ceiling | Implemented (`AI_MAX_OUTPUT_TOKENS`) — not a billing cap |
+| Request timeout / AbortSignal | Implemented |
+| Automatic retries | Disabled (`maxRetries: 0`) |
+| Usage measurement | Implemented from provider fields when present |
+| Cost estimate | Implemented for cataloged models; labeled estimated |
+| Per-user daily request quota | **Not enforced** (`AI_MAX_REQUESTS_PER_USER_DAY` is config only) |
+| Guaranteed monetary cap | **Not implemented** |
+
+M3.3 (requirements → tasks) must add authenticated endpoints, user consent before sending task text, and a durable quota **before** exposing paid provider calls.
+
+**Errors:** previous codes plus `CREDENTIALS`, `REFUSAL`, `INCOMPLETE`. Public payloads use fixed messages — no API keys, Authorization headers, prompts, or raw model text.
+
+**Privacy:** `store: false` is not a privacy review or a substitute for provider policy compliance. No SQL tools, no task writes by the model, no real development task text sent in automated tests. Future M3.3/M3.4 feature workflows still need authenticated authorization before transmitting user data. OpenAI API use is also subject to the provider's supported-region and account eligibility rules.
+
+**Live smoke:** `npm run ai:smoke` is opt-in (`AI_LIVE_SMOKE=true` + enabled OpenAI + key). It is not called by `npm test`, CI, or process startup. It makes at most one synthetic request. Do not run it without eligible access and explicit approval. Current live verification: **UNVERIFIED**.
+
+**Deterministic tests:** `apps/api/src/ai/*.test.ts` mock the SDK `create` function. They do not sleep and do not need network or paid credentials.
+
 ## Engineering choices and limitations
 
 1. **PostgreSQL rather than a fake frontend-only API.** Persists data across restarts.
 2. **Typed DTO validation and parameterized SQL.** Server validates external inputs instead of trusting the UI.
 3. **Angular signals + RxJS.** The task list is driven by the paged API. Search uses `debounceTime(300)`, `distinctUntilChanged` and `switchMap`. Authorized-scope KPIs use `GET /api/tasks/summary`. Matching/page counts use `pagination.total` / `items.length`.
 4. **Minimal dependencies.** UI uses native HTML controls and custom CSS rather than a large component library.
-5. **Explicit scope.** Login, CSRF (including task writes), task ownership, and a guarded dashboard are implemented. There is no dedicated `team` query parameter: team matching is part of `search`. There is no public registration, OAuth, or workspace model. Cross-tab refresh is coordinated with Web Locks when the browser supports it; otherwise two tabs can still race. This is a local/demo project, not a production deployment.
+5. **Explicit scope.** Login, CSRF (including task writes), task ownership, and a guarded dashboard are implemented. There is no dedicated `team` query parameter: team matching is part of `search`. There is no public registration, OAuth, or workspace model. Cross-tab refresh is coordinated with Web Locks when the browser supports it; otherwise two tabs can still race. AI infrastructure exists behind `AiService` with an optional OpenAI adapter; it is disabled by default, has no public AI HTTP routes, and does not generate tasks or reports. Live OpenAI access is unverified. This is a local/demo project, not a production deployment.
 
 Future improvements are recorded in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 

@@ -6,8 +6,9 @@
     "start:dev": "node -e \"process.env.NODE_ENV=process.env.NODE_ENV||'development'; require('child_process').spawnSync('npx', ['nest', 'start', '--watch'], {stdio:'inherit', env:process.env, shell:true})\"",
     "build": "nest build",
     "start": "node -e \"process.env.NODE_ENV='production'; require('./dist/main.js')\"",
-    "test": "tsx --import ./src/testing/ensure-test-env.ts --test src/domain/*.test.ts src/auth/*.test.ts src/http/*.test.ts src/database/migrate.checksum.test.ts",
-    "test:integration": "tsx --import ./src/testing/ensure-test-env.ts --test src/*.integration.test.ts src/database/*.integration.test.ts"
+    "test": "tsx --import ./src/testing/ensure-test-env.ts --test src/domain/*.test.ts src/auth/*.test.ts src/http/*.test.ts src/ai/*.test.ts src/database/migrate.checksum.test.ts",
+    "test:integration": "tsx --import ./src/testing/ensure-test-env.ts --test src/*.integration.test.ts src/database/*.integration.test.ts",
+    "ai:smoke": "tsx src/ai/ai.smoke.cli.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
@@ -18,6 +19,7 @@
     "argon2": "^0.45.1",
     "cookie-parser": "^1.4.7",
     "jose": "^6.2.12",
+    "openai": "^7.39.0",
     "pg": "^8.13.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.0"
