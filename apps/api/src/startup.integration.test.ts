@@ -29,6 +29,14 @@ before(async () => {
     'AUTH_LOGIN_THROTTLE_LIMIT',
     'AUTH_REFRESH_THROTTLE_LIMIT',
     'DATABASE_URL',
+    'AI_ENABLED',
+    'AI_PROVIDER',
+    'AI_MODEL',
+    'OPENAI_API_KEY',
+    'AI_MAX_INPUT_CHARS',
+    'AI_MAX_OUTPUT_TOKENS',
+    'AI_REQUEST_TIMEOUT_MS',
+    'AI_MAX_REQUESTS_PER_USER_DAY',
   ]);
   process.env.DATABASE_URL = await ensureIsolatedTestDatabase('flowops_test_startup');
   delete process.env.AUTH_ACCESS_TTL_SECONDS;
@@ -36,10 +44,69 @@ before(async () => {
   delete process.env.AUTH_ARGON2_TIME;
   delete process.env.AUTH_LOGIN_THROTTLE_LIMIT;
   delete process.env.AUTH_REFRESH_THROTTLE_LIMIT;
+  delete process.env.AI_ENABLED;
+  delete process.env.AI_PROVIDER;
+  delete process.env.AI_MODEL;
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.AI_MAX_INPUT_CHARS;
+  delete process.env.AI_MAX_OUTPUT_TOKENS;
+  delete process.env.AI_REQUEST_TIMEOUT_MS;
+  delete process.env.AI_MAX_REQUESTS_PER_USER_DAY;
 });
 
 after(() => {
   restoreEnv();
+});
+
+test('Nest startup without AI keys leaves AI disabled', async () => {
+  process.env.NODE_ENV = 'development';
+  process.env.JWT_SECRET = 'development-jwt-secret-32-chars-min';
+  process.env.AUTH_COOKIE_SECURE = 'false';
+  delete process.env.AI_ENABLED;
+  delete process.env.AI_PROVIDER;
+  delete process.env.AI_MODEL;
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.AI_MAX_INPUT_CHARS;
+  delete process.env.AI_MAX_OUTPUT_TOKENS;
+  delete process.env.AI_REQUEST_TIMEOUT_MS;
+  delete process.env.AI_MAX_REQUESTS_PER_USER_DAY;
+  const { AppModule } = await import('./app.module');
+  const { AiService } = await import('./ai/ai.service');
+  const { AiError } = await import('./ai/ai.errors');
+  const { ILLUSTRATIVE_NOTE_SCHEMA } = await import('./ai/ai.fixtures');
+  const app = await NestFactory.create(AppModule, { logger: false });
+  try {
+    configureApp(app);
+    const ai = app.get(AiService);
+    await assert.rejects(
+      () => ai.generateStructured({
+        systemInstruction: 'Return JSON only.',
+        userInput: 'Draft a note.',
+        schemaName: 'illustrative.note',
+        schema: ILLUSTRATIVE_NOTE_SCHEMA,
+      }),
+      (error: unknown) => error instanceof AiError && error.code === 'AI_DISABLED',
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test('enabled OpenAI without a key fails closed at Nest startup', async () => {
+  process.env.NODE_ENV = 'development';
+  process.env.JWT_SECRET = 'development-jwt-secret-32-chars-min';
+  process.env.AUTH_COOKIE_SECURE = 'false';
+  process.env.AI_ENABLED = 'true';
+  process.env.AI_PROVIDER = 'openai';
+  delete process.env.OPENAI_API_KEY;
+  const { AppModule } = await import('./app.module');
+  await assert.rejects(
+    () => NestFactory.create(AppModule, { logger: false, abortOnError: false }),
+    (error: unknown) => error instanceof Error && /OPENAI_API_KEY is required/.test(error.message) && !error.message.includes('sk-'),
+  );
+  delete process.env.AI_ENABLED;
+  delete process.env.AI_PROVIDER;
+  delete process.env.OPENAI_API_KEY;
 });
 
 test('production Nest startup refuses insecure cookies before listen', async () => {
