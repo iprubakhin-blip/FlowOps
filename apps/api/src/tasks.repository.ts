@@ -79,6 +79,34 @@ export class TasksRepository implements OnModuleInit {
     return mapTask(result.rows[0]);
   }
 
+  async createMany(payloads: NewTask[], ownerId: number): Promise<Task[]> {
+    const client = await this.database.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const created: Task[] = [];
+      for (const payload of payloads) {
+        const result = await client.query(
+          `INSERT INTO tasks (title, team, priority, owner_id, description, due_at)
+           VALUES ($1, $2, $3, $4, $5, $6::date)
+           RETURNING ${TASK_COLUMNS}`,
+          [payload.title, payload.team, payload.priority, ownerId, payload.description, payload.dueDate],
+        );
+        created.push(mapTask(result.rows[0]));
+      }
+      await client.query('COMMIT');
+      return created;
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // The original error is the one callers should see.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async update(id: number, patch: TaskPatch, user: PublicUser): Promise<Task | null> {
     const assignments: string[] = [];
     const params: unknown[] = [];

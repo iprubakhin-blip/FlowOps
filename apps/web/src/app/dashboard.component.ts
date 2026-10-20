@@ -23,6 +23,7 @@ import {
   tableScopeHint,
   tasksHeading,
 } from './dashboard.context';
+import { AiBacklogComponent } from './ai/ai-backlog.component';
 import { TasksService } from './services/tasks.service';
 import { UserRole } from './models/user';
 import { completionLabel, formatCalendarDate } from './task-dates';
@@ -31,7 +32,7 @@ import { TaskDraft, buildCreateBody, buildEditPatch, taskToDraft } from './task-
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, AiBacklogComponent],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.css',
 })
@@ -41,6 +42,7 @@ export class DashboardComponent {
   private readonly router = inject(Router);
   readonly search = signal('');
   readonly showForm = signal(false);
+  readonly showAi = signal(false);
   readonly editingId = signal<number | null>(null);
   readonly expandedId = signal<number | null>(null);
   readonly formError = signal<string | null>(null);

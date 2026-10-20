@@ -1,10 +1,12 @@
 import { publicAiError, type AiErrorCode } from './ai.errors';
 import { UNAVAILABLE_USAGE, type AiCompletionRequest, type AiCompletionResponse, type AiProvider } from './ai.types';
+import { PORTAL_DRAFT_OUTPUT } from './task-draft.fixtures';
+import { TASK_DRAFT_SCHEMA_NAME } from './task-draft.types';
 
 export type MockScenario =
   | { type: 'json'; body: unknown }
   | { type: 'text'; body: string }
-  | { type: 'error'; code: Extract<AiErrorCode, 'PROVIDER_UNAVAILABLE' | 'RATE_LIMITED' | 'TIMEOUT'> }
+  | { type: 'error'; code: Extract<AiErrorCode, 'PROVIDER_UNAVAILABLE' | 'RATE_LIMITED' | 'TIMEOUT' | 'REFUSAL'> }
   | { type: 'wait-for-abort' };
 
 const MOCK_MODEL = 'flowops-mock';
@@ -12,11 +14,18 @@ const MOCK_MODEL = 'flowops-mock';
 export class MockAiProvider implements AiProvider {
   readonly id = 'mock' as const;
   private scenario: MockScenario = { type: 'error', code: 'PROVIDER_UNAVAILABLE' };
+  private customized = false;
   private completeCalls = 0;
   lastRequest: AiCompletionRequest | null = null;
 
   use(scenario: MockScenario): void {
+    this.customized = true;
     this.scenario = scenario;
+  }
+
+  reset(): void {
+    this.customized = false;
+    this.scenario = { type: 'error', code: 'PROVIDER_UNAVAILABLE' };
   }
 
   callCount(): number {
@@ -28,6 +37,18 @@ export class MockAiProvider implements AiProvider {
     this.lastRequest = request;
     if (typeof fetch !== 'undefined') {
       // Guardrail: this provider must never perform HTTP.
+    }
+    if (!this.customized && request.schemaName === TASK_DRAFT_SCHEMA_NAME) {
+      return {
+        rawText: JSON.stringify(PORTAL_DRAFT_OUTPUT),
+        provider: this.id,
+        model: MOCK_MODEL,
+        usage: {
+          provider: this.id,
+          model: MOCK_MODEL,
+          ...UNAVAILABLE_USAGE,
+        },
+      };
     }
     const scenario = this.scenario;
     if (scenario.type === 'error') {

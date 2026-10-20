@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { Inject, Injectable } from '@nestjs/common';
 import { loadAiConfig, type AiConfig } from './ai.config';
 import { AiError, publicAiError } from './ai.errors';
@@ -104,3 +105,5 @@ function awaitWithAbort<T>(work: Promise<T>, signal: AbortSignal, userSignal?: A
     );
   });
 }
+
+Reflect.defineMetadata('design:paramtypes', [Object], AiService);

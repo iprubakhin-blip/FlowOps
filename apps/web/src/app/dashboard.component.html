@@ -26,7 +26,13 @@
       </div>
     </header>
     <div class="content">
-      <div class="heading-row"><div><div class="eyebrow">TEAM OPERATIONS</div><h1>Work overview<span class="h1-dot">.</span></h1><p class="subtitle">{{ subtitle() }}</p></div><button class="primary-button" type="button" (click)="showForm.set(!showForm()); formError.set(null)"><span>＋</span> {{ showForm() ? 'Close form' : 'New task' }}</button></div>
+      <div class="heading-row">
+        <div><div class="eyebrow">TEAM OPERATIONS</div><h1>Work overview<span class="h1-dot">.</span></h1><p class="subtitle">{{ subtitle() }}</p></div>
+        <div class="heading-actions">
+          <button class="ghost-button" type="button" (click)="showAi.set(!showAi())">{{ showAi() ? 'Hide AI drafts' : 'Generate Tasks with AI' }}</button>
+          <button class="primary-button" type="button" (click)="showForm.set(!showForm()); formError.set(null)"><span>＋</span> {{ showForm() ? 'Close form' : 'New task' }}</button>
+        </div>
+      </div>
 
       <section class="stats-grid stats-summary" aria-label="Authorized task statistics">
         <div class="stat-card">
@@ -85,6 +91,10 @@
       @if (auth.error()) { <div class="alert" role="alert">{{ auth.error() }}</div> }
       @if (store.error()) { <div class="alert" role="alert">{{ store.error() }} <button type="button" (click)="store.reload()">Retry list</button></div> }
       @if (formError()) { <div class="alert" role="alert">{{ formError() }}</div> }
+
+      @if (showAi()) {
+        <app-ai-backlog></app-ai-backlog>
+      }
 
       @if (showForm()) {
         <section class="panel create-panel" aria-label="Create a task">

@@ -9,7 +9,7 @@ import { PublicUser } from './auth/auth.types';
 import { CsrfGuard } from './auth/csrf.guard';
 import { PaginatedTasks } from './domain/task-query';
 import { parseListQuery } from './domain/task-query';
-import { isStatus, parseCreateTask, parsePatchTask, Task, TaskStatus, TaskSummary } from './domain/tasks';
+import { isStatus, parseBulkCreate, parseCreateTask, parsePatchTask, Task, TaskStatus, TaskSummary } from './domain/tasks';
 import { throwClientOrInternal } from './http/client-error';
 import { TasksRepository } from './tasks.repository';
 
@@ -28,6 +28,22 @@ export class TasksController {
     const user = requireUser(request);
     try {
       return await this.tasks.findPage(parseListQuery(query), user);
+    } catch (error) {
+      throwClientOrInternal(error);
+    }
+  }
+
+  @Post('bulk')
+  @UseGuards(CsrfGuard)
+  async createBulk(
+    @Req() request: Request,
+    @Body() body: unknown,
+  ): Promise<{ items: Task[]; createdCount: number }> {
+    const ownerId = requireUser(request).id;
+    try {
+      const payloads = parseBulkCreate(body);
+      const items = await this.tasks.createMany(payloads, ownerId);
+      return { items, createdCount: items.length };
     } catch (error) {
       throwClientOrInternal(error);
     }

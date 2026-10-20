@@ -31,6 +31,9 @@ export interface NewTask {
   dueDate: string | null;
 }
 
+export const MIN_BULK_TASKS = 1;
+export const MAX_BULK_TASKS = 10;
+
 export interface TaskPatch {
   title?: string;
   team?: string;
@@ -49,6 +52,8 @@ export interface TaskSummary {
 }
 
 const PATCH_ALLOWED = new Set(['title', 'team', 'priority', 'description', 'dueDate']);
+const BULK_ALLOWED = new Set(['team', 'tasks']);
+const BULK_TASK_ALLOWED = new Set(['title', 'description', 'priority', 'dueDate']);
 const FORBIDDEN = new Set(['ownerId', 'owner_id', 'completedAt', 'completed_at', 'status', 'id', 'isOverdue', 'role']);
 
 export function isStatus(value: unknown): value is TaskStatus {
@@ -62,8 +67,8 @@ export function isPriority(value: unknown): value is TaskPriority {
 export function parseCreateTask(input: unknown): NewTask {
   const raw = requireObject(input);
   rejectForbidden(raw);
-  const title = parseRequiredTitle(raw.title);
-  const team = parseRequiredTeam(raw.team);
+  const title = parseTaskTitle(raw.title);
+  const team = parseTaskTeam(raw.team);
   if (typeof raw.priority !== 'string' || !isPriority(raw.priority)) {
     throw new ValidationError('Priority must be low, medium or high.');
   }
@@ -76,6 +81,44 @@ export function parseCreateTask(input: unknown): NewTask {
   };
 }
 
+export function parseBulkCreate(input: unknown): NewTask[] {
+  const raw = requireObject(input);
+  rejectForbidden(raw);
+  for (const key of Object.keys(raw)) {
+    if (!BULK_ALLOWED.has(key)) {
+      throw new ValidationError(`Unsupported field: ${key}.`);
+    }
+  }
+  const team = parseTaskTeam(raw.team);
+  if (!Array.isArray(raw.tasks)) {
+    throw new ValidationError('tasks must be an array.');
+  }
+  if (raw.tasks.length < MIN_BULK_TASKS || raw.tasks.length > MAX_BULK_TASKS) {
+    throw new ValidationError(`tasks must contain between ${MIN_BULK_TASKS} and ${MAX_BULK_TASKS} items.`);
+  }
+  return raw.tasks.map((item) => parseBulkItem(item, team));
+}
+
+function parseBulkItem(input: unknown, team: string): NewTask {
+  const raw = requireObject(input);
+  rejectForbidden(raw);
+  if (Object.prototype.hasOwnProperty.call(raw, 'team')) {
+    throw new ValidationError('team cannot be set on individual bulk tasks.');
+  }
+  for (const key of Object.keys(raw)) {
+    if (!BULK_TASK_ALLOWED.has(key)) {
+      throw new ValidationError(`Unsupported field: ${key}.`);
+    }
+  }
+  return parseCreateTask({
+    title: raw.title,
+    team,
+    priority: raw.priority,
+    description: raw.description,
+    dueDate: raw.dueDate,
+  });
+}
+
 export function parsePatchTask(input: unknown): TaskPatch {
   const raw = requireObject(input);
   rejectForbidden(raw);
@@ -85,8 +128,8 @@ export function parsePatchTask(input: unknown): TaskPatch {
     }
   }
   const patch: TaskPatch = {};
-  if (Object.prototype.hasOwnProperty.call(raw, 'title')) patch.title = parseRequiredTitle(raw.title);
-  if (Object.prototype.hasOwnProperty.call(raw, 'team')) patch.team = parseRequiredTeam(raw.team);
+  if (Object.prototype.hasOwnProperty.call(raw, 'title')) patch.title = parseTaskTitle(raw.title);
+  if (Object.prototype.hasOwnProperty.call(raw, 'team')) patch.team = parseTaskTeam(raw.team);
   if (Object.prototype.hasOwnProperty.call(raw, 'priority')) {
     if (typeof raw.priority !== 'string' || !isPriority(raw.priority)) {
       throw new ValidationError('Priority must be low, medium or high.');
@@ -120,7 +163,7 @@ function rejectForbidden(raw: Record<string, unknown>): void {
   }
 }
 
-function parseRequiredTitle(value: unknown): string {
+export function parseTaskTitle(value: unknown): string {
   const title = typeof value === 'string' ? value.trim() : '';
   if (title.length < 3 || title.length > 120) {
     throw new ValidationError('Title must be between 3 and 120 characters.');
@@ -128,7 +171,7 @@ function parseRequiredTitle(value: unknown): string {
   return title;
 }
 
-function parseRequiredTeam(value: unknown): string {
+export function parseTaskTeam(value: unknown): string {
   const team = typeof value === 'string' ? value.trim() : '';
   if (team.length < 2 || team.length > 60) {
     throw new ValidationError('Team must be between 2 and 60 characters.');

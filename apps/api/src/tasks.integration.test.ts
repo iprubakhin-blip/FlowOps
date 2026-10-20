@@ -675,3 +675,148 @@ test('summary is scoped, aggregated in SQL, and independent of pagination', asyn
   assert.equal(adminSummary.overdue, 2);
   assert.equal(adminSummary.highPriorityOpen, 2);
 });
+
+function bulkBody(tasks: Array<Record<string, unknown>>, team = 'Platform'): string {
+  return JSON.stringify({ team, tasks });
+}
+
+test('anonymous bulk create is unauthorized and missing CSRF is rejected', async () => {
+  const anonymous = await json('/api/tasks/bulk', {
+    method: 'POST',
+    headers: CSRF_HEADERS,
+    body: bulkBody([{ title: 'Bulk anonymous', priority: 'low' }]),
+  });
+  assert.equal(anonymous.status, 401);
+  const token = await signAccessToken(memberA.id, memberA.role);
+  const noCsrf = await json('/api/tasks/bulk', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:4300' },
+    body: bulkBody([{ title: 'Bulk no csrf', priority: 'low' }]),
+  });
+  assert.equal(noCsrf.status, 403);
+});
+
+test('MEMBER and ADMIN bulk-create own todo tasks; forged fields are rejected', async () => {
+  const memberResult = await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody([
+      { title: 'Member bulk one', description: 'first', priority: 'medium', dueDate: null },
+      { title: 'Member bulk two', priority: 'high', dueDate: '2026-11-02' },
+    ]),
+  });
+  assert.equal(memberResult.status, 201);
+  assert.equal(memberResult.body.createdCount, 2);
+  const items = memberResult.body.items as unknown as Task[];
+  assert.ok(items.every((task) => task.ownerId === memberA.id && task.status === 'todo' && task.team === 'Platform'));
+  assert.equal(items[0].dueDate, null);
+  assert.equal(items[1].dueDate, '2026-11-02');
+
+  const adminResult = await authed(admin, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody([{ title: 'Admin bulk one', priority: 'low' }]),
+  });
+  assert.equal(adminResult.status, 201);
+  const adminItems = adminResult.body.items as unknown as Task[];
+  assert.equal(adminItems[0].ownerId, admin.id);
+
+  assert.equal((await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: JSON.stringify({ team: 'Platform', ownerId: admin.id, tasks: [{ title: 'Forge owner', priority: 'low' }] }),
+  })).status, 400);
+  assert.equal((await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody([{ title: 'Forge status', priority: 'low', status: 'done' }]),
+  })).status, 400);
+  assert.equal((await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody([{ title: 'Forge completed', priority: 'low', completedAt: '2026-01-01T00:00:00.000Z' }]),
+  })).status, 400);
+  assert.equal((await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: JSON.stringify({ team: 'Platform', model: 'gpt', tasks: [{ title: 'Forge model', priority: 'low' }] }),
+  })).status, 400);
+
+  const listed = (await authed(memberA, '/api/tasks?search=Member%20bulk')).body as unknown as PaginatedTasks;
+  assert.equal(listed.pagination.total, 2);
+  assert.ok(listed.items.every((task) => task.ownerId === memberA.id));
+  const summary = (await authed(memberA, '/api/tasks/summary')).body as unknown as TaskSummary;
+  assert.equal(summary.total, 2);
+  assert.equal(summary.todo, 2);
+
+  const beforeQuota = await pool.query('SELECT count(*)::int AS count FROM ai_request_quotas');
+  await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody([{ title: 'Quota untouched', priority: 'low' }]),
+  });
+  const afterQuota = await pool.query('SELECT count(*)::int AS count FROM ai_request_quotas');
+  assert.equal(beforeQuota.rows[0].count, 0);
+  assert.equal(afterQuota.rows[0].count, 0);
+});
+
+test('bulk create validates the whole batch and rolls back a mid-transaction database failure', async () => {
+  assert.equal((await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody([]),
+  })).status, 400);
+  assert.equal((await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody(Array.from({ length: 11 }, (_, index) => ({ title: `Too many ${index} task`, priority: 'low' }))),
+  })).status, 400);
+
+  const invalid = await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody([
+      { title: 'Valid title here', priority: 'low' },
+      { title: 'x', priority: 'low' },
+    ]),
+  });
+  assert.equal(invalid.status, 400);
+  const afterInvalid = await pool.query('SELECT count(*)::int AS count FROM tasks');
+  assert.equal(afterInvalid.rows[0].count, 0);
+
+  const ten = await authed(memberA, '/api/tasks/bulk', {
+    method: 'POST',
+    body: bulkBody(Array.from({ length: 10 }, (_, index) => ({
+      title: `Ten batch ${String(index + 1).padStart(2, '0')}`,
+      priority: 'medium',
+    }))),
+  });
+  assert.equal(ten.status, 201);
+  assert.equal(ten.body.createdCount, 10);
+
+  await pool.query('TRUNCATE TABLE tasks RESTART IDENTITY CASCADE');
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION flowops_fail_second_bulk() RETURNS trigger AS $$
+    BEGIN
+      IF (SELECT count(*) FROM tasks WHERE title LIKE 'BULK-FAIL-%') >= 1 THEN
+        RAISE EXCEPTION 'simulated bulk failure';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS flowops_fail_second_bulk ON tasks;
+    CREATE TRIGGER flowops_fail_second_bulk BEFORE INSERT ON tasks
+    FOR EACH ROW EXECUTE FUNCTION flowops_fail_second_bulk();
+  `);
+  try {
+    const failed = await authed(memberA, '/api/tasks/bulk', {
+      method: 'POST',
+      body: bulkBody([
+        { title: 'BULK-FAIL-ONE', priority: 'low' },
+        { title: 'BULK-FAIL-TWO', priority: 'low' },
+      ]),
+    });
+    assert.equal(failed.status, 500);
+    const leftover = await pool.query(`SELECT count(*)::int AS count FROM tasks WHERE title LIKE 'BULK-FAIL-%'`);
+    assert.equal(leftover.rows[0].count, 0);
+  } finally {
+    await pool.query('DROP TRIGGER IF EXISTS flowops_fail_second_bulk ON tasks');
+    await pool.query('DROP FUNCTION IF EXISTS flowops_fail_second_bulk()');
+  }
+
+  const single = await authed(memberA, '/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'Single still works', team: 'QA', priority: 'low' }),
+  });
+  assert.equal(single.status, 201);
+});

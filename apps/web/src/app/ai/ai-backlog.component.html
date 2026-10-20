@@ -1,0 +1,113 @@
+<section class="ai-panel" aria-label="Generate tasks with AI">
+  <div class="panel-heading">
+    <h2>Generate Tasks with AI</h2>
+    <p>AI proposes a draft backlog. Nothing is saved until you click Create Tasks.</p>
+  </div>
+
+  @if (capsError()) {
+    <div class="alert" role="alert">{{ capsError() }} <button type="button" (click)="reloadCapabilities()">Retry</button></div>
+  }
+
+  @if (capabilities(); as caps) {
+    <p class="mode-line">
+      @if (!caps.enabled) {
+        AI is disabled on this server. Draft generation is unavailable.
+      } @else if (mockMode()) {
+        Demo mode: predefined sample tasks are returned. Results may not reflect your requirements.
+      } @else {
+        Provider mode: {{ caps.provider }}. Live provider access has not been verified in this environment.
+      }
+    </p>
+
+    <form (ngSubmit)="generate()">
+      <label class="form-field full">Project requirements
+        <textarea
+          name="requirements"
+          rows="5"
+          [ngModel]="requirements()" (ngModelChange)="requirements.set($event)"
+          [maxlength]="caps.maxRequirementsChars"
+          [minlength]="minRequirements"
+          [disabled]="!caps.enabled || generating()"
+          placeholder="Describe the project. This is sent only after you generate."
+        ></textarea>
+      </label>
+      <label class="form-field">Team
+        <input name="team" list="ai-teams" [ngModel]="team()" (ngModelChange)="team.set($event)" required minlength="2" maxlength="60" [disabled]="generating()" />
+        <datalist id="ai-teams">
+          @for (option of suggestedTeams; track option) { <option [value]="option"></option> }
+        </datalist>
+      </label>
+      @if (consentRequired()) {
+        <label class="consent">
+          <input type="checkbox" name="consent" [ngModel]="consentChecked()" (ngModelChange)="consentChecked.set($event)" [disabled]="generating()" />
+          Send these requirements to an external AI provider. Unchecked by default. This is request-level permission, not a privacy compliance programme.
+        </label>
+      } @else if (caps.enabled) {
+        <p class="consent-note">Mock generation stays on this server and does not send requirements to an external provider.</p>
+      }
+      <button class="primary-button submit-button" type="submit" [disabled]="!canGenerate()">
+        {{ generating() ? 'Generating…' : 'Generate Tasks with AI' }}
+      </button>
+    </form>
+  }
+
+  @if (generateError()) { <div class="alert" role="alert">{{ generateError() }}</div> }
+
+  @if (lastResponse(); as meta) {
+    <p class="meta">Provider {{ meta.provider }} · model {{ meta.model }} · drafts are not persisted.</p>
+    @if (meta.usage.usageAvailable && meta.usage.cost.status === 'estimated' && meta.usage.cost.amountUsd !== null) {
+      <p class="meta">Estimated usage cost ${{ meta.usage.cost.amountUsd }} (not an invoice).</p>
+    } @else if (meta.usage.usageAvailable === false) {
+      <p class="meta">Usage and cost are unavailable for this response.</p>
+    }
+  }
+
+  @if (warnings().length) {
+    <ul class="warnings">
+      @for (warning of warnings(); track warning) { <li>{{ warning }}</li> }
+    </ul>
+  }
+
+  @if (drafts().length) {
+    <div class="draft-toolbar">
+      <strong>{{ drafts().length }} draft{{ drafts().length === 1 ? '' : 's' }}</strong>
+      <span>Team: {{ team() }} · status will be to do</span>
+    </div>
+    <ul class="draft-list">
+      @for (draft of drafts(); track draft.localId) {
+        <li class="draft-card">
+          <label class="form-field wide">Title
+            <input [name]="'title-' + draft.localId" [ngModel]="draft.title" (ngModelChange)="updateDraft(draft.localId, { title: $event })" minlength="3" maxlength="120" />
+          </label>
+          <label class="form-field">Priority
+            <select [name]="'priority-' + draft.localId" [ngModel]="draft.priority" (ngModelChange)="updateDraft(draft.localId, { priority: $event })">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label class="form-field">Due date
+            <input type="date" [name]="'due-' + draft.localId" [ngModel]="draft.dueDate" (ngModelChange)="updateDraft(draft.localId, { dueDate: $event })" />
+          </label>
+          <label class="form-field full">Description
+            <textarea [name]="'desc-' + draft.localId" rows="3" [ngModel]="draft.description" (ngModelChange)="updateDraft(draft.localId, { description: $event })" [maxlength]="maxDescription"></textarea>
+          </label>
+          <button class="ghost-button" type="button" (click)="removeDraft(draft.localId)">Remove</button>
+        </li>
+      }
+    </ul>
+    <div class="form-actions">
+      <button class="ghost-button" type="button" [disabled]="drafts().length >= (capabilities()?.maxDrafts ?? 10)" (click)="addDraft()">Add draft</button>
+      <button class="ghost-button" type="button" [disabled]="store.saving()" (click)="discardDrafts()">Discard drafts</button>
+      <button class="primary-button" type="button" [disabled]="!canCreate()" (click)="createTasks()">
+        {{ store.saving() ? 'Creating…' : 'Create ' + drafts().length + ' task' + (drafts().length === 1 ? '' : 's') }}
+      </button>
+    </div>
+    @if (createBlockedReason()) {
+      <p class="hint">{{ createBlockedReason() }}</p>
+    }
+  }
+
+  @if (persistError()) { <div class="alert" role="alert">{{ persistError() }}</div> }
+  @if (persistSuccess()) { <div class="success" role="status">{{ persistSuccess() }}</div> }
+</section>

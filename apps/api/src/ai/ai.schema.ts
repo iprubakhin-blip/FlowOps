@@ -2,11 +2,12 @@ import { publicAiError } from './ai.errors';
 
 export type JsonSchema =
   | { type: 'string'; minLength?: number; maxLength?: number }
+  | { type: 'nullish-string'; minLength?: number; maxLength?: number }
   | { type: 'number' }
   | { type: 'boolean' }
   | { type: 'enum'; values: readonly string[] }
   | { type: 'array'; items: JsonSchema; minItems?: number; maxItems: number }
-  | { type: 'object'; properties: Record<string, JsonSchema>; required: readonly string[] };
+  | { type: 'object'; properties: Record<string, JsonSchema>; required: readonly string[]; additionalProperties?: boolean };
 
 export function parseProviderJson(rawText: string): unknown {
   try {
@@ -23,6 +24,12 @@ export function validateStructured<T>(value: unknown, schema: JsonSchema): T {
 function visit(value: unknown, schema: JsonSchema): unknown {
   switch (schema.type) {
     case 'string':
+      if (typeof value !== 'string') throw publicAiError('VALIDATION_FAILED');
+      if (schema.minLength !== undefined && value.length < schema.minLength) throw publicAiError('VALIDATION_FAILED');
+      if (schema.maxLength !== undefined && value.length > schema.maxLength) throw publicAiError('VALIDATION_FAILED');
+      return value;
+    case 'nullish-string':
+      if (value === null) return null;
       if (typeof value !== 'string') throw publicAiError('VALIDATION_FAILED');
       if (schema.minLength !== undefined && value.length < schema.minLength) throw publicAiError('VALIDATION_FAILED');
       if (schema.maxLength !== undefined && value.length > schema.maxLength) throw publicAiError('VALIDATION_FAILED');
@@ -46,6 +53,11 @@ function visit(value: unknown, schema: JsonSchema): unknown {
       const record = value as Record<string, unknown>;
       for (const key of schema.required) {
         if (!(key in record)) throw publicAiError('VALIDATION_FAILED');
+      }
+      if (schema.additionalProperties === false) {
+        for (const key of Object.keys(record)) {
+          if (!(key in schema.properties)) throw publicAiError('VALIDATION_FAILED');
+        }
       }
       const output: Record<string, unknown> = {};
       for (const [key, field] of Object.entries(schema.properties)) {

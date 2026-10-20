@@ -68,21 +68,27 @@ test('adds the CSRF header to task writes and keeps credentials', () => {
   runInterceptor(new HttpRequest('POST', '/api/tasks', { title: 'Owned by server' }), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
   runInterceptor(new HttpRequest('PATCH', '/api/tasks/12/status', { status: 'done' }), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
   runInterceptor(new HttpRequest('PATCH', '/api/tasks/12', { title: 'Edited' }), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
+  runInterceptor(new HttpRequest('POST', '/api/tasks/bulk', { team: 'QA', tasks: [] }), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
+  runInterceptor(new HttpRequest('POST', '/api/ai/task-drafts', { requirements: 'Build a portal with login.', team: 'QA' }), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
   assert.equal(seen[0].withCredentials, true);
   assert.equal(seen[0].headers.get(CSRF_HEADER), CSRF_HEADER_VALUE);
   assert.equal(seen[1].headers.get(CSRF_HEADER), CSRF_HEADER_VALUE);
   assert.equal(seen[2].headers.get(CSRF_HEADER), CSRF_HEADER_VALUE);
+  assert.equal(seen[3].headers.get(CSRF_HEADER), CSRF_HEADER_VALUE);
+  assert.equal(seen[4].headers.get(CSRF_HEADER), CSRF_HEADER_VALUE);
 });
 
-test('does not add the CSRF header to GET /api/tasks', () => {
+test('does not add the CSRF header to GET /api/tasks or AI capabilities', () => {
   const seen: HttpRequest<unknown>[] = [];
   const next: HttpHandlerFn = (req) => {
     seen.push(req);
     return of(new HttpResponse({ status: 200, body: { items: [], pagination: {} } }));
   };
   runInterceptor(new HttpRequest('GET', '/api/tasks'), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
+  runInterceptor(new HttpRequest('GET', '/api/ai/capabilities'), next, backendHandle(() => of(new HttpResponse({ status: 200 })))).subscribe();
   assert.equal(seen[0].withCredentials, true);
   assert.equal(seen[0].headers.has(CSRF_HEADER), false);
+  assert.equal(seen[1].headers.has(CSRF_HEADER), false);
 });
 
 test('expired access on /me refreshes once then retries', async () => {

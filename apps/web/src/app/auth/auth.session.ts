@@ -20,7 +20,7 @@ export function needsCsrfHeader(method: string, url: string): boolean {
   const verb = method.toUpperCase();
   if (verb === 'GET' || verb === 'HEAD' || verb === 'OPTIONS') return false;
   if (isAuthMutation(verb, url)) return true;
-  return url.includes('/api/tasks');
+  return url.includes('/api/tasks') || url.includes('/api/ai');
 }
 
 export function shouldAttemptRefresh(url: string, retried: boolean): boolean {

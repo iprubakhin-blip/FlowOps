@@ -149,7 +149,7 @@ Angular has a login page at **`/login`**. Serve the SPA at **http://127.0.0.1:43
 | `AI_MAX_INPUT_CHARS` | Max characters for system instruction and for user input (each). Default `8000`. |
 | `AI_MAX_OUTPUT_TOKENS` | Ceiling passed to the provider. Default `1024`. Callers cannot raise it. Not a billing cap. |
 | `AI_REQUEST_TIMEOUT_MS` | Abort timeout for provider calls. Default `15000`. |
-| `AI_MAX_REQUESTS_PER_USER_DAY` | Stored config only. Default `20`. **Not enforced.** No per-user counter, no durable quota, no monetary cap. M3.3/M3.4 must enforce a real quota before any authenticated paid endpoint. |
+| `AI_MAX_REQUESTS_PER_USER_DAY` | Per authenticated user per UTC date in PostgreSQL (`ai_request_quotas`). Default `20`. Reserved before the provider call; failed attempts still consume a slot. **Not a dollar cap.** |
 | `AI_LIVE_SMOKE` | Must be `true` plus eligible credentials to run `npm run ai:smoke`. Not used by `npm test` or CI. |
 
 Provision the first admin: put a strong password in `.env` (not in git), start the API once, then remove the bootstrap variables if you want. Logs never include the password or hash.
@@ -288,7 +288,7 @@ Before applying **005** to a long-lived local `flowops` volume, dump it (`pg_dum
 
 ### AI infrastructure (M3.2-A / M3.2-B / M3.2-C)
 
-M3.2-C is an offline QA pass over the AI module. **There are still no public `/api/ai/*` routes, no task-draft generation, no project insights, and no Angular AI UI.** This is infrastructure, not a user-facing copilot. Live OpenAI connectivity is **UNVERIFIED** (no paid request has been made; regional/account eligibility plus explicit approval are required first). A passing mocked test is not live proof.
+M3.3-B adds the dashboard **Generate Tasks with AI** workflow on top of M3.3-A. M3.3-C verified that path in a real browser against isolated mock QA (`flowops_test_m33c`). Drafts are still not saved until **Create Tasks**. Live OpenAI is still **UNVERIFIED**. Mock output is a deterministic fixture, not LLM inference.
 
 Runtime: **Node.js 22** (CI `node-version: '22'`; `openai@7.39` engines `>=22`). Root `engines.node` is `>=22.0.0`.
 
@@ -315,10 +315,20 @@ Runtime: **Node.js 22** (CI `node-version: '22'`; `openai@7.39` engines `>=22`).
 | Automatic retries | Disabled (`maxRetries: 0`) |
 | Usage measurement | Implemented from provider fields when present |
 | Cost estimate | Implemented for cataloged models; labeled estimated |
-| Per-user daily request quota | **Not enforced** (`AI_MAX_REQUESTS_PER_USER_DAY` is config only) |
+| Per-user daily request quota | Implemented in PostgreSQL per user per UTC date. Not a spending cap. |
 | Guaranteed monetary cap | **Not implemented** |
+| Request-level external consent | Implemented (`allowExternalProcessing`) for `AI_PROVIDER=openai`. Not a full legal/privacy programme. |
 
-M3.3 (requirements → tasks) must add authenticated endpoints, user consent before sending task text, and a durable quota **before** exposing paid provider calls.
+**Task drafts (M3.3-A / M3.3-B / M3.3-C):**
+
+| Piece | Contract |
+|---|---|
+| `GET /api/ai/capabilities` | Authenticated. No CSRF. No quota. No provider call. `{ enabled, provider, externalProcessingRequired, maxRequirementsChars, maxDrafts }`. Never includes keys. |
+| `POST /api/ai/task-drafts` | JWT + CSRF. Body `{ requirements, team, allowExternalProcessing }`. Team from the request. `persisted: false`. Mock fixtures never hit the network. OpenAI requires `allowExternalProcessing: true` before any send. Quota is reserved first; failures still consume a slot. |
+| Dashboard panel | Requirements, team, mock disclaimer or external-consent checkbox, generate, edit/add/remove drafts (1–10), **Create Tasks**. Descriptions render as text (`{{ }}`), not `innerHTML`. |
+| `POST /api/tasks/bulk` | JWT + CSRF. `{ team, tasks: [{ title, description, priority, dueDate }] }`. 1–10 items. Owner = authenticated user. Status `todo`. One PostgreSQL transaction: all rows or none. Does **not** call an LLM. Independent of the prior draft response. Not exactly-once: a lost response can leave the user unsure; the UI says to check the list before retrying. There is no automatic bulk retry. |
+
+Mock mode copy: “Demo mode: predefined sample tasks are returned.” Do not treat that as verified model output. M3.3-C real-browser verification used **MockAiProvider only**; it is not live LLM reasoning. Consent is request-level, not a privacy programme. Isolated tests apply `006_ai_request_quotas.sql` only to `flowops_test*`. Dump `flowops` before applying 006 locally. Daily request quota is not a dollar cap.
 
 **Errors:** previous codes plus `CREDENTIALS`, `REFUSAL`, `INCOMPLETE`. Public payloads use fixed messages — no API keys, Authorization headers, prompts, or raw model text.
 
@@ -334,7 +344,7 @@ M3.3 (requirements → tasks) must add authenticated endpoints, user consent bef
 2. **Typed DTO validation and parameterized SQL.** Server validates external inputs instead of trusting the UI.
 3. **Angular signals + RxJS.** The task list is driven by the paged API. Search uses `debounceTime(300)`, `distinctUntilChanged` and `switchMap`. Authorized-scope KPIs use `GET /api/tasks/summary`. Matching/page counts use `pagination.total` / `items.length`.
 4. **Minimal dependencies.** UI uses native HTML controls and custom CSS rather than a large component library.
-5. **Explicit scope.** Login, CSRF (including task writes), task ownership, and a guarded dashboard are implemented. There is no dedicated `team` query parameter: team matching is part of `search`. There is no public registration, OAuth, or workspace model. Cross-tab refresh is coordinated with Web Locks when the browser supports it; otherwise two tabs can still race. AI infrastructure exists behind `AiService` with an optional OpenAI adapter; it is disabled by default, has no public AI HTTP routes, and does not generate tasks or reports. Live OpenAI access is unverified. This is a local/demo project, not a production deployment.
+5. **Explicit scope.** Login, CSRF (including task writes), task ownership, and a guarded dashboard are implemented. There is no dedicated `team` query parameter: team matching is part of `search`. There is no public registration, OAuth, or workspace model. Cross-tab refresh is coordinated with Web Locks when the browser supports it; otherwise two tabs can still race. AI can propose task drafts through the dashboard when enabled; tasks are created only after **Create Tasks** (`POST /api/tasks/bulk`). Live OpenAI access is unverified. This is a local/demo project, not a production deployment.
 
 Future improvements are recorded in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 

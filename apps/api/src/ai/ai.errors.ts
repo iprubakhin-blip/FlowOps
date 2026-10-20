@@ -10,6 +10,8 @@ export const AI_ERROR_CODES = [
   'CREDENTIALS',
   'REFUSAL',
   'INCOMPLETE',
+  'CONSENT_REQUIRED',
+  'QUOTA_EXCEEDED',
 ] as const;
 
 export type AiErrorCode = (typeof AI_ERROR_CODES)[number];
@@ -26,6 +28,8 @@ const PUBLIC_MESSAGES: Record<AiErrorCode, string> = {
   CREDENTIALS: 'The AI provider credentials are invalid.',
   REFUSAL: 'The AI provider refused to generate the requested output.',
   INCOMPLETE: 'The AI provider returned an incomplete response.',
+  CONSENT_REQUIRED: 'External AI processing requires explicit request-level consent.',
+  QUOTA_EXCEEDED: 'The daily AI request quota for this user has been reached.',
 };
 
 export class AiError extends Error {

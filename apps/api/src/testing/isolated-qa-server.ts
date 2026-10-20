@@ -10,7 +10,7 @@ import { configureApp } from '../configure-app';
 import { runMigrations } from '../database/migrate';
 import { assertIsolatedTestDatabaseUrl, ensureIsolatedTestDatabase, resetPublicSchema } from './test-database';
 
-const QA_DB = 'flowops_test_m31c';
+const QA_DB = 'flowops_test_m33c';
 const PORT = 3010;
 const ORIGIN = 'http://127.0.0.1:4310';
 const ADMIN_EMAIL = 'qa-admin@flowops.test';
@@ -133,7 +133,7 @@ async function main(): Promise<void> {
     throw new Error(`Refusing to start isolated QA against ${targetName}; expected ${QA_DB}.`);
   }
 
-  const secretsPath = join(tmpdir(), 'flowops-m31c-qa-secrets.json');
+  const secretsPath = join(tmpdir(), 'flowops-m33c-qa-secrets.json');
   const secrets = {
     origin: ORIGIN,
     api: `http://127.0.0.1:${PORT}`,
@@ -165,9 +165,18 @@ async function main(): Promise<void> {
   process.env.AUTH_REFRESH_THROTTLE_LIMIT = '1000';
   process.env.BOOTSTRAP_ADMIN_EMAIL = '';
   process.env.BOOTSTRAP_ADMIN_PASSWORD = '';
+  process.env.AI_ENABLED = 'true';
+  process.env.AI_PROVIDER = 'mock';
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.AI_LIVE_SMOKE;
   delete process.env.AUTH_ACCESS_TTL_SECONDS;
 
   const pool = new Pool({ connectionString: testUrl });
+  const connected = await pool.query<{ name: string }>('SELECT current_database() AS name');
+  if (connected.rows[0]?.name !== QA_DB) {
+    await pool.end();
+    throw new Error(`Refusing destructive QA setup: connected to ${connected.rows[0]?.name}, expected ${QA_DB}.`);
+  }
   await resetPublicSchema(pool, testUrl);
   await runMigrations(pool);
   const ids = await seed(pool, secrets);

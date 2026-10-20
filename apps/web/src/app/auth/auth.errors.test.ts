@@ -23,6 +23,9 @@ test('auth mutations require CSRF and skip refresh loops', () => {
   assert.equal(isAuthMutation('GET', '/api/auth/me'), false);
   assert.equal(needsCsrfHeader('POST', '/api/auth/login'), true);
   assert.equal(needsCsrfHeader('POST', '/api/tasks'), true);
+  assert.equal(needsCsrfHeader('POST', '/api/tasks/bulk'), true);
+  assert.equal(needsCsrfHeader('POST', '/api/ai/task-drafts'), true);
+  assert.equal(needsCsrfHeader('GET', '/api/ai/capabilities'), false);
   assert.equal(needsCsrfHeader('PATCH', '/api/tasks/3/status'), true);
   assert.equal(needsCsrfHeader('PATCH', '/api/tasks/3'), true);
   assert.equal(needsCsrfHeader('GET', '/api/tasks'), false);
