@@ -73,6 +73,11 @@ test('builds parameterized filters and a deterministic whitelist order', () => {
   assert.match(sql.orderSql, /^(id|title|team|priority|status|created_at|updated_at) (ASC|DESC), id (ASC|DESC)$/);
 });
 
+test('sorts by dueDate using the due_at column allowlist with NULLS LAST', () => {
+  const sql = buildTaskListSql(parseListQuery({ sortBy: 'dueDate', sortOrder: 'asc' }));
+  assert.equal(sql.orderSql, 'due_at ASC NULLS LAST, id ASC');
+});
+
 test('ignores untrusted sort identifiers by requiring a parsed query', () => {
   const sql = buildTaskListSql(parseListQuery({ sortBy: 'createdAt', sortOrder: 'desc' }));
   assert.equal(sql.orderSql, 'created_at DESC, id DESC');

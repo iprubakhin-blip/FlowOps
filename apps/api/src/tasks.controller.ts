@@ -7,8 +7,9 @@ import { Request } from 'express';
 import { AuthGuard } from './auth/auth.guard';
 import { PublicUser } from './auth/auth.types';
 import { CsrfGuard } from './auth/csrf.guard';
-import { PaginatedTasks, parseListQuery } from './domain/task-query';
-import { isStatus, parseCreateTask, Task, TaskStatus } from './domain/tasks';
+import { PaginatedTasks } from './domain/task-query';
+import { parseListQuery } from './domain/task-query';
+import { isStatus, parseCreateTask, parsePatchTask, Task, TaskStatus, TaskSummary } from './domain/tasks';
 import { throwClientOrInternal } from './http/client-error';
 import { TasksRepository } from './tasks.repository';
 
@@ -16,6 +17,11 @@ import { TasksRepository } from './tasks.repository';
 @Controller('tasks')
 export class TasksController {
   constructor(private readonly tasks: TasksRepository) {}
+
+  @Get('summary')
+  async summary(@Req() request: Request): Promise<TaskSummary> {
+    return this.tasks.summarize(requireUser(request));
+  }
 
   @Get()
   async list(@Req() request: Request, @Query() query: Record<string, unknown>): Promise<PaginatedTasks> {
@@ -49,6 +55,23 @@ export class TasksController {
     const updated = await this.tasks.updateStatus(id, body.status, requireUser(request));
     if (!updated) throw new NotFoundException('Task not found.');
     return updated;
+  }
+
+  @Patch(':id')
+  @UseGuards(CsrfGuard)
+  async update(
+    @Req() request: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: unknown,
+  ): Promise<Task> {
+    try {
+      const updated = await this.tasks.update(id, parsePatchTask(body), requireUser(request));
+      if (!updated) throw new NotFoundException('Task not found.');
+      return updated;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throwClientOrInternal(error);
+    }
   }
 }
 

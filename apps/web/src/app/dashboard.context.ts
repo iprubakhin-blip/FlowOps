@@ -6,8 +6,14 @@ export function tasksHeading(role: UserRole): string {
 
 export function matchingCaption(role: UserRole): string {
   return role === 'ADMIN'
-    ? 'Server total for current filters'
+    ? 'Matching the current search and filters'
     : 'Your tasks matching current filters';
+}
+
+export function summaryCaption(role: UserRole): string {
+  return role === 'ADMIN'
+    ? 'All tasks you are authorized to see'
+    : 'Your tasks only — not other users';
 }
 
 export function scopeSubtitle(role: UserRole): string {

@@ -4,12 +4,15 @@ import { EMPTY, Subject, catchError, finalize, switchMap, take } from 'rxjs';
 import { taskLoadErrorMessage, taskWriteErrorMessage } from '../auth/auth.errors';
 import {
   DEFAULT_TASK_QUERY,
+  EMPTY_TASK_SUMMARY,
+  EditTask,
   NewTask,
   PaginatedTasks,
   PaginationMeta,
   Status,
   Task,
   TaskListQuery,
+  TaskSummary,
 } from '../models/task';
 
 const RESET_PAGE_KEYS = ['limit', 'status', 'priority', 'search', 'sortBy', 'sortOrder'] as const;
@@ -50,9 +53,12 @@ export class TasksService {
   readonly query = signal<TaskListQuery>({ ...DEFAULT_TASK_QUERY });
   readonly tasks = signal<Task[]>([]);
   readonly pagination = signal<PaginationMeta>({ page: 1, limit: 20, total: 0, totalPages: 0 });
+  readonly summary = signal<TaskSummary>({ ...EMPTY_TASK_SUMMARY });
   readonly loading = signal(false);
+  readonly summaryLoading = signal(false);
   readonly saving = signal(false);
   readonly error = signal<string | null>(null);
+  readonly summaryError = signal<string | null>(null);
 
   constructor() {
     this.requests.pipe(
@@ -77,6 +83,17 @@ export class TasksService {
     this.requests.next(this.query());
   }
 
+  reloadSummary(): void {
+    this.summaryLoading.set(true);
+    this.summaryError.set(null);
+    this.http.get<TaskSummary>(`${this.endpoint}/summary`)
+      .pipe(take(1), finalize(() => this.summaryLoading.set(false)))
+      .subscribe({
+        next: (summary) => this.summary.set(summary),
+        error: (error: unknown) => this.summaryError.set(taskLoadErrorMessage(error)),
+      });
+  }
+
   patchQuery(patch: Partial<TaskListQuery>): void {
     const next = applyQueryPatch(this.query(), patch);
     this.query.set(next);
@@ -89,6 +106,7 @@ export class TasksService {
   }
 
   create(payload: NewTask, onSuccess: () => void): void {
+    if (this.saving()) return;
     this.saving.set(true);
     this.error.set(null);
     this.http.post<Task>(this.endpoint, payload)
@@ -97,6 +115,24 @@ export class TasksService {
         next: () => {
           this.query.set({ ...this.query(), page: 1 });
           this.reload();
+          this.reloadSummary();
+          onSuccess();
+        },
+        error: (error: unknown) => this.error.set(taskWriteErrorMessage(error)),
+      });
+  }
+
+  update(id: number, payload: EditTask, onSuccess: () => void): void {
+    if (this.saving()) return;
+    this.saving.set(true);
+    this.error.set(null);
+    this.http.patch<Task>(`${this.endpoint}/${id}`, payload)
+      .pipe(take(1), finalize(() => this.saving.set(false)))
+      .subscribe({
+        next: (task) => {
+          this.tasks.update((rows) => rows.map((row) => (row.id === task.id ? task : row)));
+          this.reload();
+          this.reloadSummary();
           onSuccess();
         },
         error: (error: unknown) => this.error.set(taskWriteErrorMessage(error)),
@@ -104,12 +140,15 @@ export class TasksService {
   }
 
   updateStatus(task: Task, status: Status): void {
-    if (task.status === status) return;
+    if (task.status === status || this.saving()) return;
     this.error.set(null);
     this.http.patch<Task>(`${this.endpoint}/${task.id}/status`, { status })
       .pipe(take(1))
       .subscribe({
-        next: () => this.reload(),
+        next: () => {
+          this.reload();
+          this.reloadSummary();
+        },
         error: (error: unknown) => this.error.set(taskWriteErrorMessage(error)),
       });
   }

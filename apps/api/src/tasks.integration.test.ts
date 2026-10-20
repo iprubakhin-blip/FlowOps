@@ -10,7 +10,7 @@ import { hashPassword } from './auth/passwords';
 import { signAccessToken } from './auth/tokens';
 import { UserRole } from './auth/auth.types';
 import { PaginatedTasks } from './domain/task-query';
-import { Task } from './domain/tasks';
+import { Task, TaskSummary } from './domain/tasks';
 import { TasksController } from './tasks.controller';
 import { TasksRepository } from './tasks.repository';
 import { configureApp } from './configure-app';
@@ -127,6 +127,7 @@ after(async () => {
 
 test('anonymous task requests return 401', async () => {
   assert.equal((await json('/api/tasks')).status, 401);
+  assert.equal((await json('/api/tasks/summary')).status, 401);
   assert.equal((await json('/api/tasks', {
     method: 'POST',
     headers: CSRF_HEADERS,
@@ -136,6 +137,11 @@ test('anonymous task requests return 401', async () => {
     method: 'PATCH',
     headers: CSRF_HEADERS,
     body: JSON.stringify({ status: 'done' }),
+  })).status, 401);
+  assert.equal((await json('/api/tasks/1', {
+    method: 'PATCH',
+    headers: CSRF_HEADERS,
+    body: JSON.stringify({ title: 'Nope' }),
   })).status, 401);
 });
 
@@ -290,12 +296,16 @@ test('returns empty items with accurate pagination metadata', async () => {
 test('creates a task owned by the authenticated user and updates its status', async () => {
   const created = await authed(memberA, '/api/tasks', {
     method: 'POST',
-    body: JSON.stringify({ title: 'Ship integration tests', team: 'Backend', priority: 'high', ownerId: admin.id }),
+    body: JSON.stringify({ title: 'Ship integration tests', team: 'Backend', priority: 'high' }),
   });
   assert.equal(created.status, 201);
   const task = created.body as unknown as Task;
   assert.equal(task.status, 'todo');
   assert.equal(task.ownerId, memberA.id);
+  assert.equal(task.description, null);
+  assert.equal(task.dueDate, null);
+  assert.equal(task.completedAt, null);
+  assert.equal(task.isOverdue, false);
   const patched = await authed(memberA, `/api/tasks/${task.id}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status: 'done' }),
@@ -414,6 +424,12 @@ test('cookie-authenticated writes without the CSRF header are rejected', async (
   assert.equal(patch.status, 403);
   const count = await pool.query('SELECT COUNT(*)::int AS total FROM tasks');
   assert.equal(count.rows[0].total, 1);
+  const editBlocked = await json(`/api/tasks/${(seeded.body as { id: number }).id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Cookie: access, Origin: 'http://127.0.0.1:4300' },
+    body: JSON.stringify({ title: 'CSRF edit blocked' }),
+  });
+  assert.equal(editBlocked.status, 403);
 });
 
 test('invalid task input is 400 and repository failures are generic 500', async () => {
@@ -437,4 +453,225 @@ test('invalid task input is 400 and repository failures are generic 500', async 
   } finally {
     TasksRepository.prototype.findPage = original;
   }
+});
+
+test('create rejects forged owner and invalid optional fields; accepts description and dueDate', async () => {
+  const forged = await authed(memberA, '/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'Forge owner', team: 'Backend', priority: 'high', ownerId: admin.id }),
+  });
+  assert.equal(forged.status, 400);
+
+  const tooLong = await authed(memberA, '/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'Long notes', team: 'Backend', priority: 'low', description: 'x'.repeat(5001) }),
+  });
+  assert.equal(tooLong.status, 400);
+
+  const badDate = await authed(memberA, '/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'Bad date', team: 'Backend', priority: 'low', dueDate: '2026-02-30' }),
+  });
+  assert.equal(badDate.status, 400);
+
+  const created = await authed(memberA, '/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: 'Documented task',
+      team: 'Backend',
+      priority: 'medium',
+      description: 'Ship M3.1-A',
+      dueDate: '2099-12-31',
+    }),
+  });
+  assert.equal(created.status, 201);
+  const task = created.body as unknown as Task;
+  assert.equal(task.ownerId, memberA.id);
+  assert.equal(task.description, 'Ship M3.1-A');
+  assert.equal(task.dueDate, '2099-12-31');
+  assert.equal(task.completedAt, null);
+  assert.equal(task.isOverdue, false);
+  assert.equal(task.status, 'todo');
+});
+
+test('MEMBER edits own task; cannot edit another user; ADMIN can; missing is 404', async () => {
+  const own = await authed(memberA, '/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'Editable', team: 'QA', priority: 'low', description: 'keep me', dueDate: '2026-08-01' }),
+  });
+  const other = await authed(memberB, '/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'B only edit', team: 'QA', priority: 'low' }),
+  });
+  assert.equal(own.status, 201);
+  const ownId = (own.body as unknown as Task).id;
+  const otherId = (other.body as unknown as Task).id;
+
+  const edited = await authed(memberA, `/api/tasks/${ownId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title: 'Edited title', priority: 'high' }),
+  });
+  assert.equal(edited.status, 200);
+  const after = edited.body as unknown as Task;
+  assert.equal(after.title, 'Edited title');
+  assert.equal(after.team, 'QA');
+  assert.equal(after.priority, 'high');
+  assert.equal(after.description, 'keep me');
+  assert.equal(after.dueDate, '2026-08-01');
+
+  const cleared = await authed(memberA, `/api/tasks/${ownId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ description: null, dueDate: null }),
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal((cleared.body as unknown as Task).description, null);
+  assert.equal((cleared.body as unknown as Task).dueDate, null);
+
+  const denied = await authed(memberA, `/api/tasks/${otherId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title: 'Hijack' }),
+  });
+  assert.equal(denied.status, 404);
+  const stillB = await pool.query<{ title: string }>('SELECT title FROM tasks WHERE id = $1', [otherId]);
+  assert.equal(stillB.rows[0].title, 'B only edit');
+
+  const adminEdit = await authed(admin, `/api/tasks/${otherId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title: 'Admin renamed' }),
+  });
+  assert.equal(adminEdit.status, 200);
+  assert.equal((adminEdit.body as unknown as Task).title, 'Admin renamed');
+
+  const mass = await authed(memberA, `/api/tasks/${ownId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title: 'Should not apply', ownerId: memberB.id, status: 'done', completedAt: '2020-01-01T00:00:00.000Z' }),
+  });
+  assert.equal(mass.status, 400);
+  const unchanged = await pool.query<{ title: string; status: string; owner_id: number }>(
+    'SELECT title, status, owner_id FROM tasks WHERE id = $1',
+    [ownId],
+  );
+  assert.equal(unchanged.rows[0].title, 'Edited title');
+  assert.equal(unchanged.rows[0].status, 'todo');
+  assert.equal(unchanged.rows[0].owner_id, memberA.id);
+
+  assert.equal((await authed(admin, '/api/tasks/99999', {
+    method: 'PATCH',
+    body: JSON.stringify({ title: 'Missing' }),
+  })).status, 404);
+});
+
+test('status transitions own completedAt; repeating done does not fabricate a timestamp', async () => {
+  const created = await authed(memberA, '/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'Complete me', team: 'QA', priority: 'low' }),
+  });
+  const id = (created.body as unknown as Task).id;
+
+  const toProgress = await authed(memberA, `/api/tasks/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'in_progress' }),
+  });
+  assert.equal((toProgress.body as unknown as Task).completedAt, null);
+
+  const doneFromProgress = await authed(memberA, `/api/tasks/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'done' }),
+  });
+  const firstDone = doneFromProgress.body as unknown as Task;
+  assert.equal(firstDone.status, 'done');
+  assert.equal(typeof firstDone.completedAt, 'string');
+  assert.match(firstDone.completedAt ?? '', /T/);
+
+  const reopen = await authed(memberA, `/api/tasks/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'todo' }),
+  });
+  assert.equal((reopen.body as unknown as Task).completedAt, null);
+
+  const doneFromTodo = await authed(memberA, `/api/tasks/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'done' }),
+  });
+  const secondStamp = (doneFromTodo.body as unknown as Task).completedAt;
+  assert.ok(secondStamp);
+
+  await pool.query(`UPDATE tasks SET completed_at = '2020-01-01T00:00:00.000Z' WHERE id = $1`, [id]);
+  const repeat = await authed(memberA, `/api/tasks/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'done' }),
+  });
+  assert.equal((repeat.body as unknown as Task).completedAt, '2020-01-01T00:00:00.000Z');
+});
+
+test('isOverdue follows the UTC calendar policy for list and summary', async () => {
+  await pool.query(
+    `INSERT INTO tasks (title, team, priority, status, owner_id, due_at)
+     VALUES
+       ('yesterday open', 'QA', 'high', 'todo', $1, (timezone('utc', now()))::date - 1),
+       ('today open', 'QA', 'low', 'todo', $1, (timezone('utc', now()))::date),
+       ('tomorrow open', 'QA', 'low', 'todo', $1, (timezone('utc', now()))::date + 1),
+       ('yesterday done', 'QA', 'high', 'done', $1, (timezone('utc', now()))::date - 1),
+       ('no due', 'QA', 'high', 'todo', $1, NULL)`,
+    [memberA.id],
+  );
+
+  const listed = (await authed(memberA, '/api/tasks?sortBy=title&sortOrder=asc')).body as unknown as PaginatedTasks;
+  const byTitle = Object.fromEntries(listed.items.map((item) => [item.title, item]));
+  assert.equal(byTitle['yesterday open']?.isOverdue, true);
+  assert.equal(byTitle['today open']?.isOverdue, false);
+  assert.equal(byTitle['tomorrow open']?.isOverdue, false);
+  assert.equal(byTitle['yesterday done']?.isOverdue, false);
+  assert.equal(byTitle['no due']?.isOverdue, false);
+
+  const summary = (await authed(memberA, '/api/tasks/summary')).body as unknown as TaskSummary;
+  assert.equal(summary.overdue, 1);
+  assert.equal(summary.total, 5);
+  assert.equal(summary.todo, 4);
+  assert.equal(summary.done, 1);
+  assert.equal(summary.highPriorityOpen, 2);
+});
+
+test('summary is scoped, aggregated in SQL, and independent of pagination', async () => {
+  const empty = (await authed(memberA, '/api/tasks/summary')).body as unknown as TaskSummary;
+  assert.deepEqual(empty, { total: 0, todo: 0, inProgress: 0, done: 0, overdue: 0, highPriorityOpen: 0 });
+
+  await pool.query(
+    `INSERT INTO tasks (title, team, priority, status, owner_id, due_at)
+     VALUES
+       ('A todo', 'QA', 'high', 'todo', $1, (timezone('utc', now()))::date - 2),
+       ('A progress', 'QA', 'low', 'in_progress', $1, NULL),
+       ('A done', 'QA', 'high', 'done', $1, (timezone('utc', now()))::date - 2),
+       ('B todo', 'QA', 'high', 'todo', $2, (timezone('utc', now()))::date - 2)`,
+    [memberA.id, memberB.id],
+  );
+  for (let index = 0; index < 8; index += 1) {
+    await pool.query(
+      `INSERT INTO tasks (title, team, priority, owner_id) VALUES ($1, 'QA', 'low', $2)`,
+      [`A extra ${index}`, memberA.id],
+    );
+  }
+
+  const memberSummary = (await authed(memberA, '/api/tasks/summary')).body as unknown as TaskSummary;
+  assert.equal(memberSummary.total, 11);
+  assert.equal(memberSummary.todo, 9);
+  assert.equal(memberSummary.inProgress, 1);
+  assert.equal(memberSummary.done, 1);
+  assert.equal(memberSummary.overdue, 1);
+  assert.equal(memberSummary.highPriorityOpen, 1);
+
+  const page = (await authed(memberA, '/api/tasks?page=1&limit=2')).body as unknown as PaginatedTasks;
+  assert.equal(page.pagination.total, 11);
+  assert.equal(page.items.length, 2);
+  const afterPage = (await authed(memberA, '/api/tasks/summary')).body as unknown as TaskSummary;
+  assert.deepEqual(afterPage, memberSummary);
+
+  const spoof = await authed(memberA, `/api/tasks/summary?ownerId=${memberB.id}`);
+  assert.equal(spoof.status, 200);
+  assert.deepEqual(spoof.body, memberSummary);
+
+  const adminSummary = (await authed(admin, '/api/tasks/summary')).body as unknown as TaskSummary;
+  assert.equal(adminSummary.total, 12);
+  assert.equal(adminSummary.overdue, 2);
+  assert.equal(adminSummary.highPriorityOpen, 2);
 });

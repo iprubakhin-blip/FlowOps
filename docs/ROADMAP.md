@@ -31,6 +31,16 @@
 - [ ] React Hook Form and TanStack Query with mutations and error handling
 - [ ] Component and E2E tests
 
+## FlowOps AI — M3 task domain and intelligence
+
+- [x] **M3.1-A** Task domain extensions (backend/database): migration `005_extend_task_details.sql` (`description`, `due_at`, `completed_at`); UTC calendar due dates; server-owned `completedAt`; `isOverdue`; `PATCH /api/tasks/:id`; `GET /api/tasks/summary` (authorized scope, not the current page).
+- [x] **M3.1-B** Angular task details, edit, due dates, overdue display, create optional fields, and summary KPIs. No AI.
+- [x] **M3.1-C** Final integration and isolated browser QA (`flowops_test_m31c`, `127.0.0.1:4310`). MEMBER isolation, ADMIN cross-user, due dates/completion, summary KPIs, responsive 375/768/1280. No AI.
+- [ ] **M3.2** AI infrastructure
+- [ ] **M3.3** AI requirements → tasks
+- [ ] **M3.4** AI project intelligence
+- [ ] **M3.5** Portfolio release
+
 ## v0.4 — AI engineering track
 - [ ] Add a server-side LLM gateway with an explicitly configured provider
 - [ ] Structured extraction from task descriptions

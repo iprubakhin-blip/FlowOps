@@ -7,10 +7,11 @@
 ## What it does
 
 - List tasks loaded from a real PostgreSQL database through the NestJS REST API.
-- Filter, search, sort and paginate tasks through `GET /api/tasks` (status, priority, `search` on title/team).
-- Create new tasks with both client-side and server-side validation.
-- Update task statuses (`To do`, `In progress`, `Done`) and persist changes.
-- Show dashboard totals from server pagination metadata for the current query, not from the current page of rows.
+- Filter, search, sort and paginate tasks through `GET /api/tasks` (status, priority, `search` on title/team). Optional sort by `dueDate`.
+- Create new tasks with both client-side and server-side validation. Description and due date are optional on the API.
+- Update task statuses (`To do`, `In progress`, `Done`) and persist changes. Completion timestamps are owned by the server.
+- Edit title, team, priority, description, and due date through `PATCH /api/tasks/:id` in the dashboard.
+- Dashboard **statistics** use `GET /api/tasks/summary` (authorized scope, not the current search). **Matching tasks** still use `pagination.total` for the current filters.
 - Every task has an owner. MEMBER users only see their own tasks; ADMIN can see all.
 
 ### Stack
@@ -69,7 +70,7 @@ npm run test:integration
 npm run build
 ```
 
-`npm run test` runs API domain/auth unit tests and Angular service/query tests (Node.js `node:test` via `tsx`). `npm run test:integration` runs Nest tests against isolated databases (`flowops_test`, `flowops_test_migrate`, `flowops_test_auth`, `flowops_test_auth_rl`). Those suites never drop, truncate, or migrate-reset `flowops`. Postgres must be running (`docker compose up -d`). GitHub Actions runs both suites. The production build compiles API and web. There are no browser E2E tests in CI. M2.2-B protects the dashboard route and sends CSRF headers on task writes. A local browser pass at `http://127.0.0.1:4300` covered anonymous redirect, admin login, list/create/status/search, session restore, and logout. MEMBER UI and forced token expiry were not exercised in that walkthrough. Cross-tab refresh can still sign both tabs out.
+`npm run test` runs API domain/auth unit tests and Angular service/query tests (Node.js `node:test` via `tsx`). `npm run test:integration` runs Nest tests against isolated databases (`flowops_test`, `flowops_test_migrate`, `flowops_test_auth`, `flowops_test_auth_rl`). Those suites never drop, truncate, or migrate-reset `flowops`. Postgres must be running (`docker compose up -d`). GitHub Actions runs both suites. The production build compiles API and web. There are no browser E2E tests in CI. M2.2-B protects the dashboard route and sends CSRF headers on task writes. A local ADMIN browser pass at `http://127.0.0.1:4300` covered the development instance. **M3.1-C** MEMBER/ADMIN/responsive QA used an isolated instance (`flowops_test_m31c`, SPA `http://127.0.0.1:4310` proxying `/api` to port 3010). The development `flowops` database was not reset. Cross-tab refresh can still sign both tabs out. Forced access-token expiry was not re-walked in M3.1-C.
 
 ### Database migrations
 
@@ -81,6 +82,7 @@ The API applies versioned SQL from `apps/api/migrations/` on startup, before tas
 | `002_create_users.sql` | Adds `users` (unique `LOWER(email)`, role `ADMIN`/`MEMBER`). No user rows are inserted. |
 | `003_create_refresh_sessions.sql` | Adds `refresh_sessions` (FK to `users`, unique `token_hash`). No session rows are inserted. |
 | `004_task_owner.sql` | Adds `tasks.owner_id` (FK to `users`, index `(owner_id, created_at DESC, id DESC)`). TypeScript backfill assigns unowned legacy rows to an existing ADMIN, then `owner_id` is `NOT NULL`. |
+| `005_extend_task_details.sql` | Adds nullable `description` (TEXT), `due_at` (DATE, calendar due date), `completed_at` (TIMESTAMPTZ). Does not backfill completion times. Existing `done` rows keep `completed_at = NULL` when the historical time is unknown. CHECK: `completed_at` is allowed only when `status = 'done'`. Partial index on open tasks with a due date. |
 
 Fresh install: `docker compose up -d` then `npm run dev:api` — migrations create the schema including `owner_id NOT NULL`. Empty databases with **zero users and zero tasks** migrate successfully. Automatic demo task seeding is **disabled**; there is no ownerless seed and no hardcoded demo password. Create tasks after logging in as the bootstrap admin (or any user).
 
@@ -100,7 +102,9 @@ There is no `migrate` CLI; starting the API is enough. Re-running startup is ide
 |---|---|---|---|
 | GET | `/api/health` | Public | Service health |
 | GET | `/api/tasks` | Access cookie or Bearer | List tasks visible to the caller (MEMBER: own; ADMIN: all) |
+| GET | `/api/tasks/summary` | Access cookie or Bearer | Authorized-scope counts (not the current list page) |
 | POST | `/api/tasks` | Access + CSRF | Add task owned by the authenticated user |
+| PATCH | `/api/tasks/:id` | Access + CSRF | Partial edit of title/team/priority/description/dueDate |
 | PATCH | `/api/tasks/:id/status` | Access + CSRF | Update status on a visible task |
 | POST | `/api/auth/login` | Public + CSRF | Email/password login; sets cookies |
 | POST | `/api/auth/refresh` | Refresh cookie + CSRF | Rotate refresh session; sets new cookies |
@@ -111,7 +115,7 @@ There is no `migrate` CLI; starting the API is enough. Re-running startup is ide
 
 Angular has a login page at **`/login`**. Serve the SPA at **http://127.0.0.1:4300** (not `localhost`) so cookies and `Origin` match `AUTH_WEB_ORIGIN`. The dashboard at **`/`** requires `authGuard`: anonymous users go to `/login` (optional safe relative `returnUrl`). Already-authenticated visits to `/login` bounce to `/`. The guard waits for `restoreSession()` rather than treating “not initialized” as logged out. Do not treat SameSite=Lax as sufficient CSRF protection.
 
-**Roles (UI copy only — the API still enforces access):** ADMIN sees “All tasks” and filter totals for every visible row. MEMBER sees “My tasks”; KPI captions are scoped to that user’s matching tasks, not a global count. Create/status controls stay available because the backend already scopes writes to the session user. There is no assignment UI and `ownerId` is display/server-only.
+**Roles (UI copy only — the API still enforces access):** ADMIN sees “All tasks” and authorized-scope statistics for every visible row. MEMBER sees “My tasks”; summary KPIs are that user’s tasks only, never other users. Matching-task captions stay tied to the current filters. Create/edit/status controls stay available because the backend already scopes writes to the session user. There is no assignment UI and `ownerId` is display/server-only.
 
 **HTTP errors:** 401 on APIs other than login/refresh/logout may refresh the access cookie once (single-flight). Failed refresh clears client session and returns to `/login`. 403 (CSRF) and 404 (missing or hidden task) do **not** trigger refresh.
 
@@ -156,25 +160,75 @@ Tokens are never returned in JSON. Production must be HTTPS so `Secure` cookies 
 
 **Authenticated HTTP caching:** `/api/auth/*` and `/api/tasks*` responses set `Cache-Control: no-store`.
 
-**CSRF:** `POST /api/auth/login|refresh|logout`, `POST /api/tasks`, and `PATCH /api/tasks/:id/status` require header `X-Requested-With: FlowOpsWeb`. If `Origin` is present it must match `AUTH_WEB_ORIGIN`. `Sec-Fetch-Site: cross-site` is rejected. GET remains CSRF-exempt. SameSite=Lax is not treated as sufficient. CORS remains disabled (no credentialed `*`).
+**CSRF:** `POST /api/auth/login|refresh|logout`, `POST /api/tasks`, `PATCH /api/tasks/:id`, and `PATCH /api/tasks/:id/status` require header `X-Requested-With: FlowOpsWeb`. If `Origin` is present it must match `AUTH_WEB_ORIGIN`. `Sec-Fetch-Site: cross-site` is rejected. GET remains CSRF-exempt. SameSite=Lax is not treated as sufficient. CORS remains disabled (no credentialed `*`).
 
 **Authorization (tasks):** AuthGuard verifies the JWT then loads the user from PostgreSQL. Authorization uses that **database** `id`/`role`, never `ownerId` / `role` from request JSON or query parameters. If the DB role no longer matches the JWT `role` claim (or the user is gone), the request is **401** — role changes take effect on the next authenticated request, not at JWT expiry.
 
-| Role | List / search / filter / sort / page | Create | PATCH status |
-|---|---|---|---|
-| Anonymous | 401 | 401 | 401 |
-| MEMBER | Own rows only (`owner_id` in SQL, including `COUNT`) | Always `owner_id` = self | Own rows; other users' ids and missing ids → **404** |
-| ADMIN | All rows | Always `owner_id` = self (no assignment to others) | Any task |
+| Role | List / search / filter / sort / page / summary | Create | PATCH fields | PATCH status |
+|---|---|---|---|---|
+| Anonymous | 401 | 401 | 401 | 401 |
+| MEMBER | Own rows only (`owner_id` in SQL, including `COUNT` and summary) | Always `owner_id` = self | Own rows; other users' ids and missing ids → **404** | Own rows; other users' ids and missing ids → **404** |
+| ADMIN | All rows | Always `owner_id` = self (no assignment to others) | Any task | Any task |
 
-There is no task deletion and no assignment API.
+There is no task deletion and no assignment API. `ownerId` and `completedAt` are never client-writable.
+
+### Task dates, completion, overdue, and summary (M3.1-A)
+
+**Due dates** are calendar dates, not timestamps. API `dueDate` is `YYYY-MM-DD` or `null`; PostgreSQL stores `due_at DATE`. Overdue uses the **UTC calendar date** of `now()`:
+
+- has a due date, and
+- `due_at` is **before** today's UTC date, and
+- `status` is not `done`.
+
+Due today is not overdue. Missing due dates are not overdue. Completed tasks are not overdue. List `isOverdue` and summary `overdue` share the same SQL predicate.
+
+**Completion:** `completedAt` is set by the server on `PATCH /api/tasks/:id/status` only. `todo`/`in_progress` → `done` sets `completed_at = NOW()`. Any transition out of `done` clears it. Repeating `done` on an already-done task leaves `completed_at` unchanged (including historical `NULL`). Clients cannot set `completedAt`.
+
+**Create** still requires `title`, `team`, `priority`. Optional `description` (string or `null`, max 5000 characters after trim; empty becomes `null`) and `dueDate`. Existing bodies without those fields still create a `todo` owned by the session user. `ownerId` / `completedAt` / `status` in the body are rejected.
+
+**Edit** (`PATCH /api/tasks/:id`) is a partial update of `title`, `team`, `priority`, `description`, `dueDate`. At least one of those keys is required. Omitted keys stay unchanged. Explicit `null` clears `description` or `dueDate`. Status stays on the status endpoint. Unsupported keys are **400**.
+
+**Summary** (`GET /api/tasks/summary`) aggregates every task the caller is allowed to see (MEMBER: own; ADMIN: all). It is **not** limited to the current list page or filters.
+
+```json
+{
+  "total": 0,
+  "todo": 0,
+  "inProgress": 0,
+  "done": 0,
+  "overdue": 0,
+  "highPriorityOpen": 0
+}
+```
+
+`highPriorityOpen` is unfinished (`status <> 'done'`) tasks with `priority = 'high'`.
+
+Task JSON is additive:
+
+```json
+{
+  "id": 1,
+  "title": "Refine team dashboard",
+  "team": "Frontend",
+  "priority": "high",
+  "status": "todo",
+  "ownerId": 7,
+  "description": null,
+  "dueDate": "2026-10-20",
+  "completedAt": null,
+  "isOverdue": false,
+  "createdAt": "2026-10-18T12:00:00.000Z",
+  "updatedAt": "2026-10-18T12:00:00.000Z"
+}
+```
+
+Angular (M3.1-B) shows description, due date (calendar `YYYY-MM-DD`, not `Date` parsed), overdue from `isOverdue`, and `completedAt` when the server has it. Done tasks with a null completion time show “Completion time unavailable”. Create and edit forms never send `ownerId`, `completedAt`, `isOverdue`, or status on `PATCH /api/tasks/:id`. Status still uses `PATCH /api/tasks/:id/status`. Summary KPIs refresh after create, edit, and status changes; search/filter/page changes do not refetch summary.
 
 **Rate limits** (in-memory, per API process, per IP from `req.ip` — `X-Forwarded-For` is ignored): login **5/minute**, refresh **20/minute**, HTTP **429**. Health checks are not throttled. Multiple instances each have their own counters.
 
 **JWT:** `jose` HS256 only (`alg` is allowlisted), issuer `flowops`, audience `flowops-web`, claims `sub`, `role`, `jti`, `iat`, `exp`. `Authorization: Bearer` is preferred over the access cookie when both are present. Passwords are Argon2id (OWASP-style 19 MiB, t=2, p=1). Unknown emails still run a dummy verify. Public registration is not implemented.
 
-**MEMBER browser checks:** do not insert disposable users into the local `flowops` database. Use an isolated DB (`flowops_test*`) and HTTP integration tests, or a dedicated local instance. GitHub Actions has not been assumed to have run on this branch; run `npm run test`, `npm run test:integration`, and `npm run build` locally. Backups under `backups/` are gitignored and contain password hashes — keep them private.
-
-A local **ADMIN** browser pass was executed in M2.2-B. MEMBER UI in a real browser is still a manual isolated-instance check.
+**Isolated browser QA (M3.1-C):** do not insert disposable users into `flowops`. The harness `apps/api/src/testing/isolated-qa-server.ts` creates/resets **only** `flowops_test_m31c` after `assertIsolatedTestDatabaseUrl`. Start the isolated API (`npx tsx src/testing/isolated-qa-server.ts` from `apps/api`), then the SPA: `npx ng serve --host 127.0.0.1 --port 4310 --proxy-config src/proxy.isolated.json` from `apps/web`. Test-only ADMIN/MEMBER A/MEMBER B credentials are written to a gitignored `*qa-secrets.json` file under the OS temp directory (path is logged; passwords are not). A real-browser pass on that origin verified MEMBER-scoped list/summary/search, create/edit/status/`completedAt`, 404 on another user's id, ADMIN cross-user list/edit/summary, logout route protection, and viewports ~375/768/1280. Phone topbar wrapping was tightened so session controls stay visible. GitHub Actions has not been assumed to have run on this branch; run `npm run test`, `npm run test:integration`, and `npm run build` locally. Backups under `backups/` are gitignored and contain password hashes — keep them private.
 
 `GET /api/tasks` query parameters:
 
@@ -185,7 +239,7 @@ A local **ADMIN** browser pass was executed in M2.2-B. MEMBER UI in a real brows
 | `status` | — | `todo`, `in_progress`, `done` |
 | `priority` | — | `low`, `medium`, `high` |
 | `search` | — | Case-insensitive match on title or team (max 120 chars) |
-| `sortBy` | `createdAt` | `id`, `title`, `team`, `priority`, `status`, `createdAt`, `updatedAt` |
+| `sortBy` | `createdAt` | `id`, `title`, `team`, `priority`, `status`, `createdAt`, `updatedAt`, `dueDate` (`due_at`, NULLS LAST) |
 | `sortOrder` | `desc` | `asc` or `desc` |
 
 Invalid values return **HTTP 400**. Filtering, search, sort and pagination run in PostgreSQL. Sort is deterministic (`sortBy`, then `id`). Response shape:
@@ -209,13 +263,25 @@ curl -X POST http://localhost:3000/api/tasks \
   -H "X-Requested-With: FlowOpsWeb" \
   -H "Origin: http://127.0.0.1:4300" \
   -d '{"title":"Refine team dashboard","team":"Frontend","priority":"high"}'
+
+curl -X PATCH http://localhost:3000/api/tasks/1 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "X-Requested-With: FlowOpsWeb" \
+  -H "Origin: http://127.0.0.1:4300" \
+  -d '{"description":"Track delivery","dueDate":"2026-10-20"}'
+
+curl http://localhost:3000/api/tasks/summary \
+  -H "Authorization: Bearer ACCESS_TOKEN"
 ```
+
+Before applying **005** to a long-lived local `flowops` volume, dump it (`pg_dump` into gitignored `backups/`). The migration only adds nullable columns and a CHECK; it does not truncate tasks, users, or sessions. Isolated tests never touch `flowops`.
 
 ## Engineering choices and limitations
 
 1. **PostgreSQL rather than a fake frontend-only API.** Persists data across restarts.
 2. **Typed DTO validation and parameterized SQL.** Server validates external inputs instead of trusting the UI.
-3. **Angular signals + RxJS.** The task list is driven by the paged API. Search uses `debounceTime(300)`, `distinctUntilChanged` and `switchMap`. Dashboard numbers use the server `pagination.total`, not counts from the current page.
+3. **Angular signals + RxJS.** The task list is driven by the paged API. Search uses `debounceTime(300)`, `distinctUntilChanged` and `switchMap`. Authorized-scope KPIs use `GET /api/tasks/summary`. Matching/page counts use `pagination.total` / `items.length`.
 4. **Minimal dependencies.** UI uses native HTML controls and custom CSS rather than a large component library.
 5. **Explicit scope.** Login, CSRF (including task writes), task ownership, and a guarded dashboard are implemented. There is no dedicated `team` query parameter: team matching is part of `search`. There is no public registration, OAuth, or workspace model. Cross-tab refresh is coordinated with Web Locks when the browser supports it; otherwise two tabs can still race. This is a local/demo project, not a production deployment.
 

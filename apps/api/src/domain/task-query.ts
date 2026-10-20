@@ -20,6 +20,7 @@ export const SORT_FIELDS = [
   'status',
   'createdAt',
   'updatedAt',
+  'dueDate',
 ] as const;
 
 export const SORT_ORDERS = ['asc', 'desc'] as const;
@@ -57,6 +58,7 @@ const SORT_COLUMNS: Record<TaskSortBy, string> = {
   status: 'status',
   createdAt: 'created_at',
   updatedAt: 'updated_at',
+  dueDate: 'due_at',
 };
 
 export function paginationMeta(total: number, page: number, limit: number): PaginationMeta {
@@ -196,7 +198,8 @@ export function buildTaskListSql(query: TaskListQuery, ownerId?: number): TaskLi
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const direction = query.sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   const column = SORT_COLUMNS[query.sortBy];
-  const orderSql = `${column} ${direction}, id ${direction}`;
+  const nulls = query.sortBy === 'dueDate' ? ' NULLS LAST' : '';
+  const orderSql = `${column} ${direction}${nulls}, id ${direction}`;
 
   return {
     whereSql,

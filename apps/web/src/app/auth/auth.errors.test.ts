@@ -24,7 +24,9 @@ test('auth mutations require CSRF and skip refresh loops', () => {
   assert.equal(needsCsrfHeader('POST', '/api/auth/login'), true);
   assert.equal(needsCsrfHeader('POST', '/api/tasks'), true);
   assert.equal(needsCsrfHeader('PATCH', '/api/tasks/3/status'), true);
+  assert.equal(needsCsrfHeader('PATCH', '/api/tasks/3'), true);
   assert.equal(needsCsrfHeader('GET', '/api/tasks'), false);
+  assert.equal(needsCsrfHeader('GET', '/api/tasks/summary'), false);
   assert.equal(shouldAttemptRefresh('/api/tasks', false), true);
   assert.equal(shouldAttemptRefresh('/api/auth/me', false), true);
   assert.equal(shouldAttemptRefresh('/api/auth/login', false), false);
@@ -42,6 +44,10 @@ test('safeReturnUrl rejects external and login targets', () => {
 });
 
 test('task 403 and 404 messages are not treated as session expiry', () => {
+  assert.match(taskWriteErrorMessage(new HttpErrorResponse({
+    status: 400,
+    error: { message: 'dueDate must be a real calendar date.' },
+  })), /calendar date/);
   assert.match(taskWriteErrorMessage(new HttpErrorResponse({ status: 403 })), /blocked/i);
   assert.match(taskWriteErrorMessage(new HttpErrorResponse({ status: 404 })), /no longer available/);
   assert.match(taskLoadErrorMessage(new HttpErrorResponse({ status: 401 })), /session expired/);
